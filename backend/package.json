@@ -1,0 +1,15 @@
+{
+  "name": "estacionamento-backend",
+  "version": "1.0.0",
+  "description": "Backend para consulta de placas com API Carros",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.2"
+  }
+}
