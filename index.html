@@ -1,114 +1,126 @@
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Sistema de Estacionamento</title>
-    <!-- Vinculando o arquivo CSS externo -->
-    <link rel="stylesheet" href="./css/style.css">
+    <link rel="stylesheet" href="./css/style.css" />
 </head>
 <body>
 
-    <h1>Sistema de Estacionamento</h1>
+    <header>
+        <h1>Sistema de Estacionamento</h1>
+    </header>
     
-    <div class="buttons-container">
-        <button onclick="openEntradaPopup()">Entrada</button>
-        <button onclick="openSaidaPopup()">Saída</button>
-    </div>
+    <main class="container">
+        <div class="controls">
+            <button id="btnEntrada">Entrada</button>
+            <button id="btnSaida">Saída</button>
+            <button id="btnMenu">Configurações</button>
+        </div>
 
-    <!-- Seção de Carros no Pátio -->
-    <div id="patioSection">
-        <h2>Carros no Pátio</h2>
-        <div id="patioCarList"></div>
-    </div>
+        <section id="patioSection">
+            <h2>Carros no Pátio</h2>
+            <div id="patioCarList" aria-live="polite"></div>
+        </section>
+    </main>
     
-    <div id="entradaPopup" class="popup">
+    <!-- POPUP ENTRADA -->
+    <div id="entradaPopup" class="popup" aria-hidden="true">
         <div class="popup-content">
-            <span class="close" onclick="closePopup('entradaPopup')">&times;</span>
+            <button class="close" data-close>&times;</button>
             <h2>Registrar Entrada</h2>
-            <label for="placaEntrada">Placa do Carro:</label>
-            <input type="text" id="placaEntrada">
-            <label for="marcaEntrada">Marca do Carro:</label>
+
+            <label>Placa do Carro:</label>
+            <input type="text" id="placaEntrada" maxlength="9" placeholder="ABC1D23" autocomplete="off">
+
+            <label>Marca:</label>
             <select id="marcaEntrada">
-                <option value="chevrolet">Chevrolet</option>
-                <option value="ford">Ford</option>
-                <option value="volkswagen">Volkswagen</option>
-                <option value="fiat">Fiat</option>
-                <option value="toyota">Toyota</option>
-                <option value="hyundai">Hyundai</option>
-                <option value="honda">Honda</option>
-                <option value="byd">BYD</option>
-                <option value="haval">Haval</option>
-                <option value="kia">Kia</option>
-                <option value="jac">JAC</option>
-                <option value="landrover">Land Rover</option>
-                <option value="mercedes">Mercedes</option>
-                <option value="bmw">BMW</option>
-                <option value="jeep">Jeep</option>
-                <!-- Adicione outras marcas conforme necessário -->
+                <option value="">Escolha uma marca</option>
+                <option>Chevrolet</option><option>Ford</option><option>Volkswagen</option>
+                <option>Fiat</option><option>Toyota</option><option>Hyundai</option>
+                <option>Honda</option><option>BYD</option><option>Haval</option>
+                <option>Kia</option><option>JAC</option><option>Land Rover</option>
+                <option>Mercedes</option><option>BMW</option><option>Jeep</option>
             </select>
-            <label for="modeloEntrada">Modelo do Carro:</label>
+
+            <label>Modelo:</label>
             <input type="text" id="modeloEntrada">
-            <label for="corEntrada">Cor do Carro:</label>
+
+            <label>Cor:</label>
             <input type="text" id="corEntrada">
-            <button onclick="registrarEntrada()">Registrar</button>
+
+            <button id="registrarBtn">Registrar</button>
         </div>
     </div>
     
-    <div id="saidaPopup" class="popup">
+    <!-- POPUP SAÍDA -->
+    <div id="saidaPopup" class="popup" aria-hidden="true">
         <div class="popup-content">
-            <span class="close" onclick="closePopup('saidaPopup')">&times;</span>
+            <button class="close" data-close>&times;</button>
             <h2>Calcular Permanência</h2>
-            <label for="placaSaida">Placa do Carro:</label>
-            <input type="text" id="placaSaida">
-            <button onclick="calcularPermanencia()">Calcular</button>
+
+            <label>Placa:</label>
+            <input type="text" id="placaSaida" maxlength="9" placeholder="ABC1D23" autocomplete="off">
+
+            <button id="calcularBtn">Calcular</button>
         </div>
     </div>
 
-    <div id="imprimirPopup" class="popup">
-        <div class="popup-content imprimir">
-            <span class="close" onclick="closePopup('imprimirPopup')">&times;</span>
-            <h2>Dados do Veículo</h2>
+    <!-- POPUP RESULTADO -->
+    <div id="imprimirPopup" class="popup" aria-hidden="true">
+        <div class="popup-content">
+            <button class="close" data-close>&times;</button>
+
+            <h2>Resumo</h2>
+
             <div id="dadosVeiculo"></div>
             <div id="permanenciaValor"></div>
+
+            <button id="imprimirComprovanteBtn">Imprimir Comprovante</button>
         </div>
     </div>
 
-    <div id="comprovanteEntradaPopup" class="popup">
+    <!-- POPUP COMPROVANTE ENTRADA -->
+    <div id="comprovanteEntradaPopup" class="popup" aria-hidden="true">
         <div class="popup-content">
-            <span class="close" onclick="closePopup('comprovanteEntradaPopup')">&times;</span>
+            <button class="close" data-close>&times;</button>
             <h2>Comprovante de Entrada</h2>
+
             <div id="comprovanteEntrada"></div>
-            <button onclick="printComprovante()">Imprimir</button>
+            <button id="printEntradaBtn">Imprimir</button>
         </div>
     </div>
 
-    <div id="comprovantePermanenciaPopup" class="popup">
+    <!-- POPUP COMPROVANTE PERMANÊNCIA -->
+    <div id="comprovantePermanenciaPopup" class="popup" aria-hidden="true">
         <div class="popup-content">
-            <span class="close" onclick="closePopup('comprovantePermanenciaPopup')">&times;</span>
+            <button class="close" data-close>&times;</button>
             <h2>Comprovante de Permanência</h2>
+
             <div id="comprovantePermanencia"></div>
-            <button onclick="printComprovantePermanencia()">Imprimir</button>
+            <button id="printPermanenciaBtn">Imprimir</button>
         </div>
     </div>
-    
-    <div id="permanencia"></div>
-    
-    <div class="menu-container">
-        <button onclick="openMenu()">Menu</button>
-        <div id="menu" class="menu-content">
-            <span class="close" onclick="closeMenu()">&times;</span>
-            <h3>Configurações</h3>
-            <label for="valorHora">Valor da Hora (R$):</label>
-            <input type="text" id="valorHora" placeholder="Digite o valor da hora (ex: 5,00)">
-            <label for="valorHoraAdicional">Valor da Hora Adicional (R$):</label>
-            <input type="text" id="valorHoraAdicional" placeholder="Digite o valor da hora adicional (ex: 3,00)">
-            <label for="toleranciaHoraAdicional">Tolerância para Hora Adicional (minutos):</label>
-            <input type="text" id="toleranciaHoraAdicional" placeholder="Digite a tolerância para hora adicional">
-            <button onclick="saveConfig()">Salvar</button>
-        </div>
-    </div>
-    
+
+    <!-- MENU CONFIGURAÇÕES -->
+    <aside id="menu" class="menu-content" aria-hidden="true">
+        <button class="close" data-close>&times;</button>
+
+        <h3>Configurações</h3>
+
+        <label>Valor da 1ª Hora (R$):</label>
+        <input type="text" id="valorHora">
+
+        <label>Hora Adicional (R$):</label>
+        <input type="text" id="valorHoraAdicional">
+
+        <label>Tolerância (minutos):</label>
+        <input type="number" id="toleranciaHoraAdicional" min="0">
+
+        <button id="saveConfigBtn">Salvar</button>
+    </aside>
+
     <script src="./js/script.js"></script>
 </body>
 </html>
