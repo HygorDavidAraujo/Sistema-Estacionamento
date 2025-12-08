@@ -24,14 +24,43 @@ button {
     color:#fff;
     cursor:pointer;
 }
-button:hover{opacity:.9}
+button:hover{opacity:.95}
 main { padding:18px; max-width:980px; margin:0 auto; }
 #patio { background:#fff; padding:14px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.04); }
 .car-item { border-left:4px solid #0b5ed7; padding:10px; margin-bottom:10px; background:#fafafa; border-radius:6px; }
+.valor-devido { color: #0b5ed7; font-weight: bold; font-size: 1.1em; }
 .popup { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); visibility:hidden; opacity:0; transition:opacity .12s; z-index:1000;}
 .popup[aria-hidden="false"] { visibility:visible; opacity:1; }
-.popup-content { width:100%; max-width:420px; background:#fff; padding:16px; border-radius:8px; position:relative; }
+.popup-content { width:100%; max-width:460px; background:#fff; padding:16px; border-radius:8px; position:relative; }
 .close { position:absolute; right:10px; top:8px; background:transparent; border:none; font-size:22px; cursor:pointer; }
 label { display:block; margin-top:10px; font-size:13px; color:#333; }
 input[type="text"], input[type="number"], select { width:100%; padding:8px 10px; margin-top:6px; border:1px solid #ddd; border-radius:6px; }
-@media(max-width:480px){ .popup-content{ max-width:95%; } }
+
+/* Popup grande para histórico */
+.popup-content-large { max-width: 900px; max-height: 80vh; overflow-y: auto; }
+
+/* Ações do histórico */
+.historico-actions { margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* Filtros do histórico */
+.historico-filtros { background: #f9f9f9; padding: 15px; border-radius: 6px; margin-bottom: 20px; }
+.historico-filtros h4 { margin: 0 0 10px 0; font-size: 14px; color: #333; }
+.filtro-grupo { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.filtro-grupo label { font-size: 12px; margin: 0; color: #555; }
+.filtro-grupo input, .filtro-grupo select { max-width: 150px; padding: 6px 8px; }
+
+/* Conteúdo do histórico */
+.historico-conteudo { min-height: 300px; }
+
+/* Tabelas do histórico */
+.historico-conteudo table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.historico-conteudo th { border: 1px solid #ddd; padding: 8px; background: #f0f0f0; font-weight: bold; text-align: left; }
+.historico-conteudo td { border: 1px solid #ddd; padding: 8px; }
+.historico-conteudo tr:hover { background: #f9f9f9; }
+
+@media(max-width:480px){ 
+    .popup-content{ max-width:95%; } 
+    .popup-content-large { max-width: 95%; max-height: 90vh; }
+    .historico-actions { flex-direction: column; }
+    .historico-actions button { width: 100%; }
+}

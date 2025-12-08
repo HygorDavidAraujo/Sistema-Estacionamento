@@ -12,6 +12,7 @@
     <div class="header-actions">
         <button id="btnEntrada">Registrar Entrada</button>
         <button id="btnSaida">Registrar Saída</button>
+        <button id="btnHistorico">Histórico</button>
         <button id="btnMenu">Configurações</button>
     </div>
 </header>
@@ -30,7 +31,7 @@
         <h3>Entrada de Veículo</h3>
 
         <label for="placaEntrada">Placa</label>
-        <input id="placaEntrada" type="text" placeholder="ABC1D23" autocomplete="off" />
+        <input id="placaEntrada" type="text" placeholder="AAA0A00" autocomplete="off" />
 
         <label for="marcaEntrada">Marca</label>
         <input id="marcaEntrada" type="text" />
@@ -52,7 +53,7 @@
         <h3>Saída de Veículo</h3>
 
         <label for="placaSaida">Placa</label>
-        <input id="placaSaida" type="text" placeholder="ABC1D23" autocomplete="off" />
+        <input id="placaSaida" type="text" placeholder="AAA0A00" autocomplete="off" />
 
         <button id="calcularBtn">Calcular Permanência</button>
     </div>
@@ -91,6 +92,50 @@
         <button class="close" data-close>&times;</button>
         <div id="comprovantePermanencia"></div>
         <button id="printPermanenciaBtn">Imprimir</button>
+    </div>
+</div>
+
+<!-- POPUP HISTÓRICO -->
+<div class="popup" id="historicoPopup" aria-hidden="true">
+    <div class="popup-content popup-content-large">
+        <button class="close" data-close>&times;</button>
+        <h3>Histórico e Relatórios</h3>
+        
+        <div class="historico-actions">
+            <button id="btnRelatorioResumo">Resumo</button>
+            <button id="btnHistoricoCompleto">Histórico Completo</button>
+            <button id="btnBuscaPlaca">Buscar por Placa</button>
+        </div>
+        
+        <div class="historico-filtros">
+            <h4>Filtros</h4>
+            <div class="filtro-grupo">
+                <label for="filtroAno">Ano:</label>
+                <input type="number" id="filtroAno" placeholder="2025" min="2020" max="2099" />
+                
+                <label for="filtroMes">Mês:</label>
+                <select id="filtroMes">
+                    <option value="">Todos</option>
+                    <option value="01">Janeiro</option>
+                    <option value="02">Fevereiro</option>
+                    <option value="03">Março</option>
+                    <option value="04">Abril</option>
+                    <option value="05">Maio</option>
+                    <option value="06">Junho</option>
+                    <option value="07">Julho</option>
+                    <option value="08">Agosto</option>
+                    <option value="09">Setembro</option>
+                    <option value="10">Outubro</option>
+                    <option value="11">Novembro</option>
+                    <option value="12">Dezembro</option>
+                </select>
+                
+                <button id="btnAplicarFiltro">Aplicar Filtro</button>
+                <button id="btnLimparFiltro">Limpar</button>
+            </div>
+        </div>
+        
+        <div id="historicoConteudo" class="historico-conteudo"></div>
     </div>
 </div>
 
