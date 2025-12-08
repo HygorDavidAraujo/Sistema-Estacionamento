@@ -203,7 +203,7 @@ app.post("/saida", (req, res) => {
 
 // ROTA PARA OBTER HISTÓRICO COMPLETO
 app.get("/historico", (req, res) => {
-    const { dataInicio, dataFim, mes, ano } = req.query;
+    const { dataInicio, dataFim, dia, mes, ano } = req.query;
     
     let query = `SELECT * FROM historico WHERE 1=1`;
     let params = [];
@@ -212,6 +212,11 @@ app.get("/historico", (req, res) => {
     if (dataInicio && dataFim) {
         query += ` AND data_entrada BETWEEN ? AND ?`;
         params.push(dataInicio, dataFim);
+    }
+    // Filtro por dia, mês e ano
+    else if (dia && mes && ano) {
+        query += ` AND substr(data_entrada, 1, 2) = ? AND substr(data_entrada, 4, 2) = ? AND substr(data_entrada, 7, 4) = ?`;
+        params.push(dia.padStart(2, '0'), mes.padStart(2, '0'), ano);
     }
     // Filtro por mês e ano
     else if (mes && ano) {
@@ -222,6 +227,11 @@ app.get("/historico", (req, res) => {
     else if (ano) {
         query += ` AND substr(data_entrada, 7, 4) = ?`;
         params.push(ano);
+    }
+    // Filtro apenas por dia (todos os meses/anos)
+    else if (dia) {
+        query += ` AND substr(data_entrada, 1, 2) = ?`;
+        params.push(dia.padStart(2, '0'));
     }
     
     query += ` ORDER BY criado_em DESC`;

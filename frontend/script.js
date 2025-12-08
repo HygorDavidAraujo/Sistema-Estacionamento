@@ -454,8 +454,9 @@ function carregarHistoricoCompleto(filtros = {}) {
     let url = `${BACKEND_BASE}/historico`;
     const params = new URLSearchParams();
     
-    if (filtros.ano) params.append('ano', filtros.ano);
+    if (filtros.dia) params.append('dia', filtros.dia);
     if (filtros.mes) params.append('mes', filtros.mes);
+    if (filtros.ano) params.append('ano', filtros.ano);
     
     if (params.toString()) url += '?' + params.toString();
     
@@ -492,24 +493,27 @@ function carregarHistoricoCompleto(filtros = {}) {
 }
 
 function aplicarFiltroData() {
-    const ano = document.getElementById('filtroAno').value;
+    const dia = document.getElementById('filtroDia').value;
     const mes = document.getElementById('filtroMes').value;
+    const ano = document.getElementById('filtroAno').value;
     
-    if (!ano && !mes) {
-        alert('Selecione pelo menos um filtro (ano ou mês)');
+    if (!dia && !mes && !ano) {
+        alert('Selecione pelo menos um filtro (dia, mês ou ano)');
         return;
     }
     
     const filtros = {};
-    if (ano) filtros.ano = ano;
+    if (dia) filtros.dia = dia;
     if (mes) filtros.mes = mes;
+    if (ano) filtros.ano = ano;
     
     carregarHistoricoCompleto(filtros);
 }
 
 function limparFiltro() {
-    document.getElementById('filtroAno').value = '';
+    document.getElementById('filtroDia').value = '';
     document.getElementById('filtroMes').value = '';
+    document.getElementById('filtroAno').value = '';
     carregarHistoricoCompleto();
 }
 

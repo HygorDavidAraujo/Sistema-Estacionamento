@@ -110,8 +110,8 @@
         <div class="historico-filtros">
             <h4>Filtros</h4>
             <div class="filtro-grupo">
-                <label for="filtroAno">Ano:</label>
-                <input type="number" id="filtroAno" placeholder="2025" min="2020" max="2099" />
+                <label for="filtroDia">Dia:</label>
+                <input type="number" id="filtroDia" placeholder="DD" min="1" max="31" />
                 
                 <label for="filtroMes">Mês:</label>
                 <select id="filtroMes">
@@ -129,6 +129,9 @@
                     <option value="11">Novembro</option>
                     <option value="12">Dezembro</option>
                 </select>
+                
+                <label for="filtroAno">Ano:</label>
+                <input type="number" id="filtroAno" placeholder="2025" min="2020" max="2099" />
                 
                 <button id="btnAplicarFiltro">Aplicar Filtro</button>
                 <button id="btnLimparFiltro">Limpar</button>
