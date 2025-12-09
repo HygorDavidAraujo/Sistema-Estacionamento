@@ -18,24 +18,66 @@ const db = new sqlite3.Database(`${__dirname}/estacionamento.db`, (err) => {
     else console.log("[BACK] Banco de dados conectado");
 });
 
-// Criar tabela se não existir
-db.run(`
-    CREATE TABLE IF NOT EXISTS historico (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        placa TEXT NOT NULL,
-        marca TEXT,
-        modelo TEXT,
-        cor TEXT,
-        data_entrada TEXT NOT NULL,
-        hora_entrada TEXT NOT NULL,
-        data_saida TEXT,
-        hora_saida TEXT,
-        tempo_permanencia TEXT,
-        valor_pago REAL,
-        status TEXT DEFAULT 'ativo',
-        criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-`);
+// Criar tabelas se não existirem
+db.serialize(() => {
+    // Tabela histórico
+    db.run(`
+        CREATE TABLE IF NOT EXISTS historico (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            placa TEXT NOT NULL,
+            marca TEXT,
+            modelo TEXT,
+            cor TEXT,
+            data_entrada TEXT NOT NULL,
+            hora_entrada TEXT NOT NULL,
+            data_saida TEXT,
+            hora_saida TEXT,
+            tempo_permanencia TEXT,
+            valor_pago REAL,
+            status TEXT DEFAULT 'ativo',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `, (err) => {
+        if (err) console.error('[BACK] Erro ao criar tabela historico:', err);
+        else console.log('[BACK] Tabela historico pronta');
+    });
+
+    // Tabela configurações
+    db.run(`
+        CREATE TABLE IF NOT EXISTS configuracoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chave TEXT UNIQUE NOT NULL,
+            valor TEXT NOT NULL,
+            descricao TEXT,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `, (err) => {
+        if (err) {
+            console.error('[BACK] Erro ao criar tabela configuracoes:', err);
+            return;
+        }
+        
+        console.log('[BACK] Tabela configuracoes pronta');
+        
+        // Inserir configurações padrão se não existirem (dentro do callback)
+        const configuracoesDefault = [
+            { chave: 'valor_hora_inicial', valor: '5.00', descricao: 'Valor da primeira hora (R$)' },
+            { chave: 'valor_hora_adicional', valor: '2.50', descricao: 'Valor por hora adicional (R$)' },
+            { chave: 'tempo_tolerancia', valor: '15', descricao: 'Tempo de tolerância em minutos' }
+        ];
+
+        configuracoesDefault.forEach(config => {
+            db.run(
+                `INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)`,
+                [config.chave, config.valor, config.descricao],
+                (err) => {
+                    if (err) console.error(`[BACK] Erro ao inserir config ${config.chave}:`, err);
+                    else console.log(`[BACK] Config ${config.chave} inicializada`);
+                }
+            );
+        });
+    });
+});
 
 // API gratuita (sem credencial) para consulta de placa
 // Fonte: apicarros.com - retorna marca, modelo, cor, etc.
@@ -282,6 +324,106 @@ app.get("/relatorio/resumo", (req, res) => {
             res.json({ success: true, dados: rows[0] || {} });
         }
     );
+});
+
+// ROTA PARA OBTER TODAS AS CONFIGURAÇÕES
+app.get("/configuracoes", (req, res) => {
+    db.all(
+        `SELECT * FROM configuracoes ORDER BY chave`,
+        [],
+        (err, rows) => {
+            if (err) {
+                console.error("[BACK] Erro ao buscar configurações:", err);
+                return res.status(500).json({ error: "Erro ao buscar configurações" });
+            }
+            
+            // Converte array em objeto para facilitar o uso no frontend
+            const configs = {};
+            rows.forEach(row => {
+                configs[row.chave] = {
+                    valor: row.valor,
+                    descricao: row.descricao,
+                    atualizado_em: row.atualizado_em
+                };
+            });
+            
+            res.json({ success: true, dados: configs });
+        }
+    );
+});
+
+// ROTA PARA OBTER UMA CONFIGURAÇÃO ESPECÍFICA
+app.get("/configuracoes/:chave", (req, res) => {
+    const { chave } = req.params;
+    
+    db.get(
+        `SELECT * FROM configuracoes WHERE chave = ?`,
+        [chave],
+        (err, row) => {
+            if (err) {
+                console.error("[BACK] Erro ao buscar configuração:", err);
+                return res.status(500).json({ error: "Erro ao buscar configuração" });
+            }
+            if (!row) {
+                return res.status(404).json({ error: "Configuração não encontrada" });
+            }
+            res.json({ success: true, dados: row });
+        }
+    );
+});
+
+// ROTA PARA ATUALIZAR CONFIGURAÇÕES
+app.put("/configuracoes", (req, res) => {
+    const configuracoes = req.body;
+    
+    if (!configuracoes || typeof configuracoes !== 'object') {
+        return res.status(400).json({ error: "Configurações inválidas" });
+    }
+    
+    const chaves = Object.keys(configuracoes);
+    let processadas = 0;
+    let erros = [];
+    
+    if (chaves.length === 0) {
+        return res.status(400).json({ error: "Nenhuma configuração para atualizar" });
+    }
+    
+    chaves.forEach(chave => {
+        const valor = configuracoes[chave];
+        
+        db.run(
+            `UPDATE configuracoes SET valor = ?, atualizado_em = CURRENT_TIMESTAMP WHERE chave = ?`,
+            [String(valor), chave],
+            function(err) {
+                processadas++;
+                
+                if (err) {
+                    console.error(`[BACK] Erro ao atualizar ${chave}:`, err);
+                    erros.push({ chave, erro: err.message });
+                } else if (this.changes === 0) {
+                    erros.push({ chave, erro: "Configuração não encontrada" });
+                } else {
+                    console.log(`[BACK] Configuração atualizada: ${chave} = ${valor}`);
+                }
+                
+                // Se processou todas, retorna resposta
+                if (processadas === chaves.length) {
+                    if (erros.length > 0) {
+                        res.status(400).json({ 
+                            success: false, 
+                            mensagem: "Algumas configurações não foram atualizadas",
+                            erros 
+                        });
+                    } else {
+                        res.json({ 
+                            success: true, 
+                            mensagem: "Configurações atualizadas com sucesso" 
+                        });
+                    }
+                }
+            }
+        );
+    });
 });
 
 // INICIAR SERVIDOR com fallback se a porta estiver ocupada

@@ -8,6 +8,7 @@ Sistema completo para gerenciamento de estacionamento com consulta de veículos 
 - **Controle de Entrada/Saída**: Registro completo com horários e cálculo automático de permanência
 - **Histórico Completo**: Filtros por dia, mês, ano e placa
 - **Banco de Dados SQLite**: Armazenamento persistente de todas as operações
+- **Configurações Persistentes**: Valores de hora inicial, adicional e tolerância armazenados no banco
 - **Validação de Placas**: Suporte para formato Mercosul (AAA1A23) e antigo (AAA1234)
 - **Cálculo Automático**: Valor devido atualizado a cada 10 segundos
 
@@ -76,16 +77,24 @@ Sistema Estacionamento/
 
 ## 📊 Endpoints da API
 
+### Veículos
 - `GET /placa/:placa` - Consulta dados do veículo
 - `POST /entrada` - Registra entrada de veículo
 - `POST /saida` - Registra saída e calcula valor
+
+### Histórico
 - `GET /historico` - Lista histórico com filtros (dia, mes, ano)
 - `GET /historico/:placa` - Busca por placa específica
 - `GET /relatorio/resumo` - Estatísticas gerais
 
+### Configurações ⚙️
+- `GET /configuracoes` - Lista todas as configurações
+- `GET /configuracoes/:chave` - Obtém configuração específica
+- `PUT /configuracoes` - Atualiza múltiplas configurações
+
 ## 💾 Banco de Dados
 
-Tabela `historico`:
+### Tabela `historico`:
 - `id` - Identificador único
 - `placa` - Placa do veículo (normalizada para maiúsculas)
 - `marca` - Marca do veículo
@@ -99,6 +108,18 @@ Tabela `historico`:
 - `valor_pago` - Valor pago pelo cliente
 - `status` - "ativo" ou "saído"
 - `criado_em` - Timestamp de criação
+
+### Tabela `configuracoes`:
+- `id` - Identificador único
+- `chave` - Nome da configuração (única)
+- `valor` - Valor da configuração
+- `descricao` - Descrição da configuração
+- `atualizado_em` - Data/hora da última atualização
+
+**Configurações padrão:**
+- `valor_hora_inicial`: R$ 5,00 (primeira hora)
+- `valor_hora_adicional`: R$ 2,50 (hora adicional)
+- `tempo_tolerancia`: 15 minutos
 
 ## 🎯 Regras de Negócio
 

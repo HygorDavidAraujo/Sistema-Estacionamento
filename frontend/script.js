@@ -23,7 +23,7 @@ async function detectBackendPort(startPort = 3000, maxPort = 3005) {
 document.addEventListener('DOMContentLoaded', async () => {
     BACKEND_BASE = await detectBackendPort();
     bindUI();
-    loadConfig();
+    await loadConfig(); // Aguarda carregamento das configurações do banco
     updatePatioCarList();
     // atualiza tempos no pátio a cada 10s
     setInterval(updatePatioCarList, 10000);
@@ -199,25 +199,86 @@ function toggleMenu(show) { const el = document.getElementById('menu'); if (!el)
 ///////////////////////////
 // config
 ///////////////////////////
-function loadConfig() {
-    const v1 = localStorage.getItem('valorHora');
-    const v2 = localStorage.getItem('valorHoraAdicional');
-    const tol = localStorage.getItem('toleranciaHoraAdicional');
-    if (v1) document.getElementById('valorHora').value = v1;
-    if (v2) document.getElementById('valorHoraAdicional').value = v2;
-    if (tol) document.getElementById('toleranciaHoraAdicional').value = tol;
+async function loadConfig() {
+    try {
+        // Carrega do banco de dados
+        const res = await fetch(`${BACKEND_BASE}/configuracoes`);
+        if (!res.ok) throw new Error('Erro ao carregar configurações');
+        
+        const data = await res.json();
+        if (data.success && data.dados) {
+            const configs = data.dados;
+            
+            // Atualiza campos do formulário
+            if (configs.valor_hora_inicial) {
+                document.getElementById('valorHora').value = configs.valor_hora_inicial.valor;
+                localStorage.setItem('valorHora', configs.valor_hora_inicial.valor);
+            }
+            if (configs.valor_hora_adicional) {
+                document.getElementById('valorHoraAdicional').value = configs.valor_hora_adicional.valor;
+                localStorage.setItem('valorHoraAdicional', configs.valor_hora_adicional.valor);
+            }
+            if (configs.tempo_tolerancia) {
+                document.getElementById('toleranciaHoraAdicional').value = configs.tempo_tolerancia.valor;
+                localStorage.setItem('toleranciaHoraAdicional', configs.tempo_tolerancia.valor);
+            }
+            
+            console.log('[front] Configurações carregadas do banco de dados');
+        }
+    } catch (err) {
+        console.error('[front] Erro ao carregar configurações, usando localStorage:', err);
+        // Fallback para localStorage
+        const v1 = localStorage.getItem('valorHora') || '5.00';
+        const v2 = localStorage.getItem('valorHoraAdicional') || '2.50';
+        const tol = localStorage.getItem('toleranciaHoraAdicional') || '15';
+        
+        document.getElementById('valorHora').value = v1;
+        document.getElementById('valorHoraAdicional').value = v2;
+        document.getElementById('toleranciaHoraAdicional').value = tol;
+    }
 }
 
-function saveConfig() {
+async function saveConfig() {
     const v1 = document.getElementById('valorHora').value;
     const v2 = document.getElementById('valorHoraAdicional').value;
     const tol = document.getElementById('toleranciaHoraAdicional').value;
+    
     if (!v1 || !v2 || !tol) return alert('Preencha todos os campos.');
-    localStorage.setItem('valorHora', v1);
-    localStorage.setItem('valorHoraAdicional', v2);
-    localStorage.setItem('toleranciaHoraAdicional', tol);
-    alert('Configurações salvas.');
-    toggleMenu(false);
+    
+    try {
+        // Salva no banco de dados
+        const res = await fetch(`${BACKEND_BASE}/configuracoes`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                valor_hora_inicial: v1,
+                valor_hora_adicional: v2,
+                tempo_tolerancia: tol
+            })
+        });
+        
+        const data = await res.json();
+        
+        if (!data.success) {
+            throw new Error(data.mensagem || 'Erro ao salvar configurações');
+        }
+        
+        // Atualiza localStorage para cache
+        localStorage.setItem('valorHora', v1);
+        localStorage.setItem('valorHoraAdicional', v2);
+        localStorage.setItem('toleranciaHoraAdicional', tol);
+        
+        alert('Configurações salvas com sucesso no banco de dados!');
+        console.log('[front] Configurações salvas:', data);
+        toggleMenu(false);
+        
+        // Atualiza lista do pátio para refletir novos valores
+        updatePatioCarList();
+        
+    } catch (err) {
+        console.error('[front] Erro ao salvar configurações:', err);
+        alert('Erro ao salvar configurações: ' + err.message);
+    }
 }
 
 ///////////////////////////
@@ -278,9 +339,10 @@ function registrarEntrada() {
         clearEntradaForm();
         closePopup('entradaPopup');
 
-        const valorHora = localStorage.getItem('valorHora') || "0";
-        const valorHoraAdc = localStorage.getItem('valorHoraAdicional') || "0";
-        const tolerancia = localStorage.getItem('toleranciaHoraAdicional') || "0";
+        // Busca valores atualizados do banco
+        const valorHora = localStorage.getItem('valorHora') || "5.00";
+        const valorHoraAdc = localStorage.getItem('valorHoraAdicional') || "2.50";
+        const tolerancia = localStorage.getItem('toleranciaHoraAdicional') || "15";
 
         document.getElementById('comprovanteEntrada').innerHTML = `
             <h3>Comprovante de Entrada</h3>
