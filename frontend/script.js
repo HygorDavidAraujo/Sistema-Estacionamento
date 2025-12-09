@@ -383,11 +383,16 @@ function calcularPermanencia() {
     const tolerancia = parseInt(localStorage.getItem('toleranciaHoraAdicional')) || 0;
 
     let total = 0;
-    if (totalMin <= 60) total = valorHora;
-    else {
+    
+    // Aplica tolerância desde o início
+    if (totalMin <= tolerancia) {
+        total = 0; // Dentro da tolerância, não cobra
+    } else if (totalMin <= 60) {
+        total = valorHora; // Primeira hora
+    } else {
+        // Após primeira hora, cobra hora inicial + horas adicionais
         const exced = totalMin - 60;
-        if (exced <= tolerancia) total = valorHora;
-        else total = valorHora + Math.ceil(exced/60) * valorHoraAd;
+        total = valorHora + Math.ceil(exced/60) * valorHoraAd;
     }
 
     document.getElementById('comprovantePermanencia').innerHTML = `
@@ -453,11 +458,16 @@ function updatePatioCarList() {
             const tolerancia = parseInt(localStorage.getItem('toleranciaHoraAdicional')) || 0;
             
             let valorDevido = 0;
-            if (totalMin <= 60) valorDevido = valorHora;
-            else {
+            
+            // Aplica tolerância desde o início
+            if (totalMin <= tolerancia) {
+                valorDevido = 0; // Dentro da tolerância, não cobra
+            } else if (totalMin <= 60) {
+                valorDevido = valorHora; // Primeira hora
+            } else {
+                // Após primeira hora, cobra hora inicial + horas adicionais
                 const exced = totalMin - 60;
-                if (exced <= tolerancia) valorDevido = valorHora;
-                else valorDevido = valorHora + Math.ceil(exced/60) * valorHoraAd;
+                valorDevido = valorHora + Math.ceil(exced/60) * valorHoraAd;
             }
             
             const div = document.createElement('div');
