@@ -18,6 +18,29 @@
 </header>
 
 <main id="main">
+    <!-- DASHBOARD DE VAGAS -->
+    <section id="dashboard">
+        <h2>Dashboard de Vagas</h2>
+        <div class="dashboard-cards">
+            <div class="dashboard-card total">
+                <h3>Total de Vagas</h3>
+                <p id="totalVagas">--</p>
+            </div>
+            <div class="dashboard-card ocupadas">
+                <h3>Vagas Ocupadas</h3>
+                <p id="vagasOcupadas">--</p>
+            </div>
+            <div class="dashboard-card disponiveis">
+                <h3>Vagas Disponíveis</h3>
+                <p id="vagasDisponiveis">--</p>
+            </div>
+            <div class="dashboard-card percentual">
+                <h3>Taxa de Ocupação</h3>
+                <p id="percentualOcupacao">--</p>
+            </div>
+        </div>
+    </section>
+
     <section id="patio">
         <h2>Veículos no Pátio</h2>
         <div id="patioCarList" aria-live="polite"></div>
@@ -73,6 +96,9 @@
 
         <label for="toleranciaHoraAdicional">Tolerância (min)</label>
         <input id="toleranciaHoraAdicional" type="number" />
+
+        <label for="totalVagasConfig">Total de Vagas</label>
+        <input id="totalVagasConfig" type="number" min="1" />
 
         <button id="saveConfigBtn">Salvar</button>
     </div>

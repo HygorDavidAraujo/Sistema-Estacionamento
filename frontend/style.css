@@ -26,9 +26,37 @@ button {
 }
 button:hover{opacity:.95}
 main { padding:18px; max-width:980px; margin:0 auto; }
+
+/* Dashboard de Vagas */
+#dashboard { background:#fff; padding:14px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.04); margin-bottom:20px; }
+.dashboard-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }
+.dashboard-card { padding: 20px; border-radius: 8px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.dashboard-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #555; font-weight: 600; }
+.dashboard-card p { margin: 0; font-size: 32px; font-weight: bold; }
+.dashboard-card.total { background: #e3f2fd; color: #1976d2; }
+.dashboard-card.total p { color: #1976d2; }
+.dashboard-card.ocupadas { background: #ffebee; color: #c62828; }
+.dashboard-card.ocupadas p { color: #c62828; }
+.dashboard-card.disponiveis { background: #e8f5e9; color: #2e7d32; }
+.dashboard-card.disponiveis p { color: #2e7d32; }
+.dashboard-card.percentual { background: #fff3e0; color: #ef6c00; }
+.dashboard-card.percentual p { color: #ef6c00; }
+
 #patio { background:#fff; padding:14px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.04); }
-.car-item { border-left:4px solid #0b5ed7; padding:10px; margin-bottom:10px; background:#fafafa; border-radius:6px; }
+.car-item { border-left:4px solid #0b5ed7; padding:10px; margin-bottom:10px; background:#fafafa; border-radius:6px; position: relative; }
 .valor-devido { color: #0b5ed7; font-weight: bold; font-size: 1.1em; }
+.btn-saida-card { 
+    margin-top: 10px; 
+    padding: 8px 16px; 
+    background: #dc3545; 
+    color: white; 
+    border: none; 
+    border-radius: 6px; 
+    cursor: pointer; 
+    font-size: 14px;
+    width: 100%;
+}
+.btn-saida-card:hover { background: #c82333; opacity: 1; }
 .popup { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); visibility:hidden; opacity:0; transition:opacity .12s; z-index:1000;}
 .popup[aria-hidden="false"] { visibility:visible; opacity:1; }
 .popup-content { width:100%; max-width:460px; background:#fff; padding:16px; border-radius:8px; position:relative; }

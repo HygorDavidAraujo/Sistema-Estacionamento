@@ -24,9 +24,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     BACKEND_BASE = await detectBackendPort();
     bindUI();
     await loadConfig(); // Aguarda carregamento das configurações do banco
+    carregarDashboard(); // Carrega dashboard de vagas
     updatePatioCarList();
-    // atualiza tempos no pátio a cada 10s
-    setInterval(updatePatioCarList, 10000);
+    // atualiza tempos no pátio e dashboard a cada 10s
+    setInterval(() => {
+        updatePatioCarList();
+        carregarDashboard();
+    }, 10000);
 });
 
 ///////////////////////////
@@ -184,6 +188,16 @@ function bindUI() {
     // input placa => autoFill
     document.getElementById('placaEntrada').addEventListener('input', autoFillVehicleDataAPI);
 
+    // Delegação de eventos para botões de saída nos cards (criados dinamicamente)
+    document.getElementById('patioCarList').addEventListener('click', (e) => {
+        if (e.target.classList.contains('btn-saida-card')) {
+            const placa = e.target.dataset.placa;
+            const tempo = e.target.dataset.tempo;
+            const valor = parseFloat(e.target.dataset.valor);
+            registrarSaidaPeloCard(placa, tempo, valor);
+        }
+    });
+
     document.querySelectorAll('.popup').forEach(p => p.addEventListener('click', e => { if (e.target === p) closePopupByElement(p); }));
     document.addEventListener('keydown', e => { if (e.key === 'Escape') { document.querySelectorAll('.popup[aria-hidden="false"]').forEach(p => closePopupByElement(p)); toggleMenu(false); }});
 }
@@ -222,6 +236,10 @@ async function loadConfig() {
                 document.getElementById('toleranciaHoraAdicional').value = configs.tempo_tolerancia.valor;
                 localStorage.setItem('toleranciaHoraAdicional', configs.tempo_tolerancia.valor);
             }
+            if (configs.total_vagas) {
+                document.getElementById('totalVagasConfig').value = configs.total_vagas.valor;
+                localStorage.setItem('totalVagas', configs.total_vagas.valor);
+            }
             
             console.log('[front] Configurações carregadas do banco de dados');
         }
@@ -231,10 +249,12 @@ async function loadConfig() {
         const v1 = localStorage.getItem('valorHora') || '5.00';
         const v2 = localStorage.getItem('valorHoraAdicional') || '2.50';
         const tol = localStorage.getItem('toleranciaHoraAdicional') || '15';
+        const vagas = localStorage.getItem('totalVagas') || '50';
         
         document.getElementById('valorHora').value = v1;
         document.getElementById('valorHoraAdicional').value = v2;
         document.getElementById('toleranciaHoraAdicional').value = tol;
+        document.getElementById('totalVagasConfig').value = vagas;
     }
 }
 
@@ -242,8 +262,9 @@ async function saveConfig() {
     const v1 = document.getElementById('valorHora').value;
     const v2 = document.getElementById('valorHoraAdicional').value;
     const tol = document.getElementById('toleranciaHoraAdicional').value;
+    const vagas = document.getElementById('totalVagasConfig').value;
     
-    if (!v1 || !v2 || !tol) return alert('Preencha todos os campos.');
+    if (!v1 || !v2 || !tol || !vagas) return alert('Preencha todos os campos.');
     
     try {
         // Salva no banco de dados
@@ -253,7 +274,8 @@ async function saveConfig() {
             body: JSON.stringify({
                 valor_hora_inicial: v1,
                 valor_hora_adicional: v2,
-                tempo_tolerancia: tol
+                tempo_tolerancia: tol,
+                total_vagas: vagas
             })
         });
         
@@ -267,13 +289,15 @@ async function saveConfig() {
         localStorage.setItem('valorHora', v1);
         localStorage.setItem('valorHoraAdicional', v2);
         localStorage.setItem('toleranciaHoraAdicional', tol);
+        localStorage.setItem('totalVagas', vagas);
         
         alert('Configurações salvas com sucesso no banco de dados!');
         console.log('[front] Configurações salvas:', data);
         toggleMenu(false);
         
-        // Atualiza lista do pátio para refletir novos valores
+        // Atualiza lista do pátio e dashboard para refletir novos valores
         updatePatioCarList();
+        carregarDashboard();
         
     } catch (err) {
         console.error('[front] Erro ao salvar configurações:', err);
@@ -327,7 +351,7 @@ function registrarEntrada() {
     .then(res => res.json())
     .then(data => {
         if (!data.success) {
-            alert('Erro ao registrar entrada: ' + (data.error || 'Desconhecido'));
+            alert('Erro ao registrar entrada: ' + (data.error || data.mensagem || 'Desconhecido'));
             return;
         }
         
@@ -336,6 +360,7 @@ function registrarEntrada() {
         localStorage.setItem(placa, JSON.stringify(entrada));
 
         updatePatioCarList();
+        carregarDashboard();
         clearEntradaForm();
         closePopup('entradaPopup');
 
@@ -421,6 +446,7 @@ function calcularPermanencia() {
         }
         localStorage.removeItem(placa);
         updatePatioCarList();
+        carregarDashboard();
         openPopup('comprovantePermanenciaPopup');
         document.getElementById('placaSaida').value = '';
     })
@@ -429,9 +455,94 @@ function calcularPermanencia() {
         alert('Erro ao registrar saída no servidor, mas comprovante foi gerado');
         localStorage.removeItem(placa);
         updatePatioCarList();
+        carregarDashboard();
         openPopup('comprovantePermanenciaPopup');
         document.getElementById('placaSaida').value = '';
     });
+}
+
+///////////////////////////
+// saída pelo card do veículo
+///////////////////////////
+function registrarSaidaPeloCard(placa, tempo, valor) {
+    if (!confirm(`Confirma a saída do veículo ${placa}?\n\nTempo: ${tempo}\nValor: R$ ${valor}`)) {
+        return;
+    }
+
+    const data = localStorage.getItem(placa);
+    if (!data) {
+        alert('Veículo não encontrado no cache local.');
+        return;
+    }
+
+    const entrada = JSON.parse(data);
+    const horaEntrada = new Date(entrada.horaEntrada);
+    const horaSaida = new Date();
+
+    // Registra saída no backend
+    fetch(`${BACKEND_BASE}/saida`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            placa, 
+            valor_pago: valor, 
+            tempo_permanencia: tempo 
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (!data.success) {
+            console.warn('[front] aviso ao registrar saída:', data.error);
+        }
+        
+        // Mostra comprovante
+        document.getElementById('comprovantePermanencia').innerHTML = `
+          <h3>Comprovante de Permanência</h3>
+          <p><b>Placa:</b> ${entrada.placa}</p>
+          <p><b>Entrada:</b> ${horaEntrada.toLocaleString()}</p>
+          <p><b>Saída:</b> ${horaSaida.toLocaleString()}</p>
+          <p><b>Tempo:</b> ${tempo}</p>
+          <p><b>Valor:</b> R$ ${Number(valor).toFixed(2)}</p>
+        `;
+        
+        localStorage.removeItem(placa);
+        updatePatioCarList();
+        carregarDashboard();
+        openPopup('comprovantePermanenciaPopup');
+    })
+    .catch(err => {
+        console.error('[front] erro ao registrar saída:', err);
+        alert('Erro ao registrar saída no servidor, mas o veículo será removido do pátio');
+        localStorage.removeItem(placa);
+        updatePatioCarList();
+        carregarDashboard();
+    });
+}
+
+///////////////////////////
+// dashboard vagas
+///////////////////////////
+async function carregarDashboard() {
+    try {
+        const res = await fetch(`${BACKEND_BASE}/dashboard`);
+        if (!res.ok) throw new Error('Erro ao carregar dashboard');
+        
+        const data = await res.json();
+        if (data.success && data.dados) {
+            const { total_vagas, vagas_ocupadas, vagas_disponiveis, percentual_ocupacao } = data.dados;
+            
+            document.getElementById('totalVagas').textContent = total_vagas;
+            document.getElementById('vagasOcupadas').textContent = vagas_ocupadas;
+            document.getElementById('vagasDisponiveis').textContent = vagas_disponiveis;
+            document.getElementById('percentualOcupacao').textContent = `${percentual_ocupacao}%`;
+        }
+    } catch (err) {
+        console.error('[front] Erro ao carregar dashboard:', err);
+        document.getElementById('totalVagas').textContent = '--';
+        document.getElementById('vagasOcupadas').textContent = '--';
+        document.getElementById('vagasDisponiveis').textContent = '--';
+        document.getElementById('percentualOcupacao').textContent = '--';
+    }
 }
 
 ///////////////////////////
@@ -477,7 +588,8 @@ function updatePatioCarList() {
                              <p><b>Modelo:</b> ${ent.modelo}</p>
                              <p><b>Cor:</b> ${ent.cor}</p>
                              <p><b>Tempo no Pátio:</b> ${tempo}</p>
-                             <p><b>Valor Devido:</b> <span class="valor-devido">R$ ${valorDevido.toFixed(2)}</span></p>`;
+                             <p><b>Valor Devido:</b> <span class="valor-devido">R$ ${valorDevido.toFixed(2)}</span></p>
+                             <button class="btn-saida-card" data-placa="${ent.placa}" data-tempo="${tempo}" data-valor="${valorDevido.toFixed(2)}">Registrar Saída</button>`;
             patio.appendChild(div);
         } catch(e){ /* ignora chaves inválidas */ }
     });

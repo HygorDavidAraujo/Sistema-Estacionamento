@@ -63,7 +63,8 @@ db.serialize(() => {
         const configuracoesDefault = [
             { chave: 'valor_hora_inicial', valor: '5.00', descricao: 'Valor da primeira hora (R$)' },
             { chave: 'valor_hora_adicional', valor: '2.50', descricao: 'Valor por hora adicional (R$)' },
-            { chave: 'tempo_tolerancia', valor: '15', descricao: 'Tempo de tolerância em minutos' }
+            { chave: 'tempo_tolerancia', valor: '15', descricao: 'Tempo de tolerância em minutos' },
+            { chave: 'total_vagas', valor: '50', descricao: 'Número total de vagas do estacionamento' }
         ];
 
         configuracoesDefault.forEach(config => {
@@ -177,26 +178,53 @@ app.post("/entrada", (req, res) => {
     // Normaliza placa para maiúsculas
     placa = sanitizePlate(placa);
 
-    const now = new Date();
-    const data_entrada = now.toLocaleDateString('pt-BR');
-    const hora_entrada = now.toLocaleTimeString('pt-BR');
-
-    db.run(
-        `INSERT INTO historico (placa, marca, modelo, cor, data_entrada, hora_entrada, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'ativo')`,
-        [placa, marca || '', modelo || '', cor || '', data_entrada, hora_entrada],
-        function(err) {
-            if (err) {
-                console.error("[BACK] Erro ao registrar entrada:", err);
-                return res.status(500).json({ error: "Erro ao registrar entrada" });
-            }
-            res.json({ 
-                success: true, 
-                id: this.lastID,
-                mensagem: "Entrada registrada com sucesso"
-            });
+    // Verifica capacidade disponível
+    db.get(`SELECT valor FROM configuracoes WHERE chave = 'total_vagas'`, [], (err, config) => {
+        if (err) {
+            console.error("[BACK] Erro ao consultar total de vagas:", err);
+            return res.status(500).json({ error: "Erro ao verificar capacidade" });
         }
-    );
+
+        const totalVagas = parseInt(config?.valor || 0);
+
+        db.get(`SELECT COUNT(*) as ocupadas FROM historico WHERE status = 'ativo'`, [], (err, result) => {
+            if (err) {
+                console.error("[BACK] Erro ao contar vagas ocupadas:", err);
+                return res.status(500).json({ error: "Erro ao verificar ocupação" });
+            }
+
+            const ocupadas = result.ocupadas || 0;
+
+            if (ocupadas >= totalVagas) {
+                return res.status(400).json({ 
+                    error: "Estacionamento lotado",
+                    mensagem: `Capacidade máxima atingida (${totalVagas} vagas)`
+                });
+            }
+
+            // Procede com a entrada
+            const now = new Date();
+            const data_entrada = now.toLocaleDateString('pt-BR');
+            const hora_entrada = now.toLocaleTimeString('pt-BR');
+
+            db.run(
+                `INSERT INTO historico (placa, marca, modelo, cor, data_entrada, hora_entrada, status)
+                 VALUES (?, ?, ?, ?, ?, ?, 'ativo')`,
+                [placa, marca || '', modelo || '', cor || '', data_entrada, hora_entrada],
+                function(err) {
+                    if (err) {
+                        console.error("[BACK] Erro ao registrar entrada:", err);
+                        return res.status(500).json({ error: "Erro ao registrar entrada" });
+                    }
+                    res.json({ 
+                        success: true, 
+                        id: this.lastID,
+                        mensagem: "Entrada registrada com sucesso"
+                    });
+                }
+            );
+        });
+    });
 });
 
 // ROTA PARA REGISTRAR SAÍDA DE VEÍCULO
@@ -324,6 +352,40 @@ app.get("/relatorio/resumo", (req, res) => {
             res.json({ success: true, dados: rows[0] || {} });
         }
     );
+});
+
+// ROTA PARA OBTER DASHBOARD DE VAGAS
+app.get("/dashboard", (req, res) => {
+    // Busca o total de vagas configurado
+    db.get(`SELECT valor FROM configuracoes WHERE chave = 'total_vagas'`, [], (err, config) => {
+        if (err) {
+            console.error("[BACK] Erro ao buscar total de vagas:", err);
+            return res.status(500).json({ error: "Erro ao buscar configuração de vagas" });
+        }
+
+        const totalVagas = parseInt(config?.valor || 0);
+
+        // Conta veículos ativos no pátio
+        db.get(`SELECT COUNT(*) as ocupadas FROM historico WHERE status = 'ativo'`, [], (err, result) => {
+            if (err) {
+                console.error("[BACK] Erro ao contar vagas ocupadas:", err);
+                return res.status(500).json({ error: "Erro ao contar vagas ocupadas" });
+            }
+
+            const ocupadas = result.ocupadas || 0;
+            const disponiveis = totalVagas - ocupadas;
+
+            res.json({ 
+                success: true, 
+                dados: {
+                    total_vagas: totalVagas,
+                    vagas_ocupadas: ocupadas,
+                    vagas_disponiveis: disponiveis,
+                    percentual_ocupacao: totalVagas > 0 ? ((ocupadas / totalVagas) * 100).toFixed(1) : 0
+                }
+            });
+        });
+    });
 });
 
 // ROTA PARA OBTER TODAS AS CONFIGURAÇÕES
