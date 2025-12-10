@@ -34,6 +34,7 @@ db.serialize(() => {
             hora_saida TEXT,
             tempo_permanencia TEXT,
             valor_pago REAL,
+            forma_pagamento TEXT,
             status TEXT DEFAULT 'ativo',
             criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -229,10 +230,14 @@ app.post("/entrada", (req, res) => {
 
 // ROTA PARA REGISTRAR SAÍDA DE VEÍCULO
 app.post("/saida", (req, res) => {
-    let { placa, valor_pago, tempo_permanencia } = req.body;
+    let { placa, valor_pago, tempo_permanencia, forma_pagamento } = req.body;
     
     if (!placa) {
         return res.status(400).json({ error: "Placa é obrigatória" });
+    }
+    
+    if (!forma_pagamento && valor_pago > 0) {
+        return res.status(400).json({ error: "Forma de pagamento é obrigatória quando há valor a pagar" });
     }
     
     // Normaliza placa para maiúsculas
@@ -242,13 +247,13 @@ app.post("/saida", (req, res) => {
     const data_saida = now.toLocaleDateString('pt-BR');
     const hora_saida = now.toLocaleTimeString('pt-BR');
     
-    console.log(`[BACK] Registrando saída - Placa: ${placa}, Valor: ${valor_pago}, Tempo: ${tempo_permanencia}`);
+    console.log(`[BACK] Registrando saída - Placa: ${placa}, Valor: ${valor_pago}, Tempo: ${tempo_permanencia}, Forma: ${forma_pagamento}`);
 
     db.run(
         `UPDATE historico 
-         SET data_saida = ?, hora_saida = ?, valor_pago = ?, tempo_permanencia = ?, status = 'saído'
+         SET data_saida = ?, hora_saida = ?, valor_pago = ?, tempo_permanencia = ?, forma_pagamento = ?, status = 'saído'
          WHERE placa = ? AND status = 'ativo'`,
-        [data_saida, hora_saida, valor_pago || 0, tempo_permanencia || '', placa],
+        [data_saida, hora_saida, valor_pago || 0, tempo_permanencia || '', forma_pagamento || null, placa],
         function(err) {
             if (err) {
                 console.error("[BACK] Erro ao registrar saída:", err);
@@ -352,6 +357,69 @@ app.get("/relatorio/resumo", (req, res) => {
             res.json({ success: true, dados: rows[0] || {} });
         }
     );
+});
+
+// ROTA PARA OBTER DASHBOARD DE CAIXA
+app.get("/caixa/dashboard", (req, res) => {
+    const hoje = new Date().toLocaleDateString('pt-BR');
+    
+    db.get(
+        `SELECT 
+            COALESCE(SUM(valor_pago), 0) as total_recebido,
+            COALESCE(SUM(CASE WHEN forma_pagamento = 'Dinheiro' THEN valor_pago ELSE 0 END), 0) as total_dinheiro,
+            COALESCE(SUM(CASE WHEN forma_pagamento = 'Cartão de Crédito' THEN valor_pago ELSE 0 END), 0) as total_credito,
+            COALESCE(SUM(CASE WHEN forma_pagamento = 'Cartão de Débito' THEN valor_pago ELSE 0 END), 0) as total_debito,
+            COALESCE(SUM(CASE WHEN forma_pagamento = 'Pix' THEN valor_pago ELSE 0 END), 0) as total_pix,
+            COUNT(CASE WHEN valor_pago > 0 THEN 1 END) as total_transacoes
+         FROM historico 
+         WHERE status = 'saído' AND data_saida = ?`,
+        [hoje],
+        (err, row) => {
+            if (err) {
+                console.error("[BACK] Erro ao gerar dashboard de caixa:", err);
+                return res.status(500).json({ error: "Erro ao gerar dashboard de caixa" });
+            }
+            res.json({ success: true, dados: row || {} });
+        }
+    );
+});
+
+// ROTA PARA RELATÓRIO DE CAIXA POR PERÍODO
+app.get("/caixa/relatorio", (req, res) => {
+    const { dataInicio, dataFim } = req.query;
+    
+    let query = `
+        SELECT 
+            data_saida,
+            forma_pagamento,
+            COUNT(*) as quantidade,
+            COALESCE(SUM(valor_pago), 0) as total
+        FROM historico 
+        WHERE status = 'saído'
+    `;
+    
+    let params = [];
+    
+    if (dataInicio && dataFim) {
+        query += ` AND data_saida BETWEEN ? AND ?`;
+        params.push(dataInicio, dataFim);
+    } else if (dataInicio) {
+        query += ` AND data_saida >= ?`;
+        params.push(dataInicio);
+    } else if (dataFim) {
+        query += ` AND data_saida <= ?`;
+        params.push(dataFim);
+    }
+    
+    query += ` GROUP BY data_saida, forma_pagamento ORDER BY data_saida DESC, forma_pagamento`;
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            console.error("[BACK] Erro ao gerar relatório de caixa:", err);
+            return res.status(500).json({ error: "Erro ao gerar relatório de caixa" });
+        }
+        res.json({ success: true, dados: rows || [] });
+    });
 });
 
 // ROTA PARA OBTER DASHBOARD DE VAGAS

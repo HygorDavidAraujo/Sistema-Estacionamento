@@ -17,35 +17,85 @@
     </div>
 </header>
 
-<main id="main">
-    <!-- DASHBOARD DE VAGAS -->
-    <section id="dashboard">
-        <h2>Dashboard de Vagas</h2>
-        <div class="dashboard-cards">
-            <div class="dashboard-card total">
-                <h3>Total de Vagas</h3>
-                <p id="totalVagas">--</p>
+<div class="main-container">
+    <main id="main">
+        <!-- DASHBOARD DE VAGAS -->
+        <section id="dashboard">
+            <h2>Dashboard de Vagas</h2>
+            <div class="dashboard-cards">
+                <div class="dashboard-card total">
+                    <h3>Total de Vagas</h3>
+                    <p id="totalVagas">--</p>
+                </div>
+                <div class="dashboard-card ocupadas">
+                    <h3>Vagas Ocupadas</h3>
+                    <p id="vagasOcupadas">--</p>
+                </div>
+                <div class="dashboard-card disponiveis">
+                    <h3>Vagas Disponíveis</h3>
+                    <p id="vagasDisponiveis">--</p>
+                </div>
+                <div class="dashboard-card percentual">
+                    <h3>Taxa de Ocupação</h3>
+                    <p id="percentualOcupacao">--</p>
+                </div>
             </div>
-            <div class="dashboard-card ocupadas">
-                <h3>Vagas Ocupadas</h3>
-                <p id="vagasOcupadas">--</p>
+        </section>
+
+        <section id="patio">
+            <h2>Veículos no Pátio</h2>
+            <div id="patioCarList" aria-live="polite"></div>
+        </section>
+    </main>
+
+    <!-- SIDEBAR CAIXA -->
+    <aside id="caixaSidebar">
+        <div class="caixa-header">
+            <h2>💰 Caixa do Dia</h2>
+            <button id="toggleCaixaBtn" class="btn-toggle">
+                <span class="icon-eye">👁️</span>
+            </button>
+        </div>
+        
+        <div class="caixa-content">
+            <div class="caixa-item total-recebido">
+                <span class="label">Total Recebido</span>
+                <span class="valor" id="caixaTotalRecebido" data-valor="0">R$ ••••••</span>
             </div>
-            <div class="dashboard-card disponiveis">
-                <h3>Vagas Disponíveis</h3>
-                <p id="vagasDisponiveis">--</p>
+            
+            <div class="caixa-divider"></div>
+            
+            <div class="caixa-item">
+                <span class="label">💵 Dinheiro</span>
+                <span class="valor" id="caixaDinheiro" data-valor="0">R$ ••••••</span>
             </div>
-            <div class="dashboard-card percentual">
-                <h3>Taxa de Ocupação</h3>
-                <p id="percentualOcupacao">--</p>
+            
+            <div class="caixa-item">
+                <span class="label">💳 Crédito</span>
+                <span class="valor" id="caixaCredito" data-valor="0">R$ ••••••</span>
+            </div>
+            
+            <div class="caixa-item">
+                <span class="label">💳 Débito</span>
+                <span class="valor" id="caixaDebito" data-valor="0">R$ ••••••</span>
+            </div>
+            
+            <div class="caixa-item">
+                <span class="label">📱 Pix</span>
+                <span class="valor" id="caixaPix" data-valor="0">R$ ••••••</span>
+            </div>
+            
+            <div class="caixa-divider"></div>
+            
+            <div class="caixa-item">
+                <span class="label">Transações</span>
+                <span class="valor" id="caixaTransacoes">0</span>
             </div>
         </div>
-    </section>
-
-    <section id="patio">
-        <h2>Veículos no Pátio</h2>
-        <div id="patioCarList" aria-live="polite"></div>
-    </section>
-</main>
+        
+        <button id="btnRelatoriosCaixa" class="btn-relatorios">Ver Relatórios</button>
+    </aside>
+</div>
 
 <!-- POPUP ENTRADA -->
 <div class="popup" id="entradaPopup" aria-hidden="true">
@@ -79,6 +129,27 @@
         <input id="placaSaida" type="text" placeholder="AAA0A00" autocomplete="off" />
 
         <button id="calcularBtn">Calcular Permanência</button>
+    </div>
+</div>
+
+<!-- POPUP PAGAMENTO -->
+<div class="popup" id="pagamentoPopup" aria-hidden="true">
+    <div class="popup-content">
+        <button class="close" data-close>&times;</button>
+        <h3>Finalizar Pagamento</h3>
+        
+        <div id="resumoPagamento" class="resumo-pagamento"></div>
+        
+        <label for="formaPagamento">Forma de Pagamento</label>
+        <select id="formaPagamento">
+            <option value="">Selecione...</option>
+            <option value="Dinheiro">💵 Dinheiro</option>
+            <option value="Cartão de Crédito">💳 Cartão de Crédito</option>
+            <option value="Cartão de Débito">💳 Cartão de Débito</option>
+            <option value="Pix">📱 Pix</option>
+        </select>
+
+        <button id="confirmarPagamentoBtn" class="btn-primary">Confirmar Pagamento</button>
     </div>
 </div>
 
@@ -165,6 +236,26 @@
         </div>
         
         <div id="historicoConteudo" class="historico-conteudo"></div>
+    </div>
+</div>
+
+<!-- POPUP RELATÓRIOS DE CAIXA -->
+<div class="popup" id="relatoriosCaixaPopup" aria-hidden="true">
+    <div class="popup-content popup-content-large">
+        <button class="close" data-close>&times;</button>
+        <h3>📊 Relatórios Financeiros</h3>
+        
+        <div class="relatorios-filtros">
+            <label for="dataInicioCaixa">Data Início:</label>
+            <input type="date" id="dataInicioCaixa" />
+            
+            <label for="dataFimCaixa">Data Fim:</label>
+            <input type="date" id="dataFimCaixa" />
+            
+            <button id="btnGerarRelatorioCaixa" class="btn-primary">Gerar Relatório</button>
+        </div>
+        
+        <div id="relatorioCaixaConteudo" class="relatorio-caixa-conteudo"></div>
     </div>
 </div>
 

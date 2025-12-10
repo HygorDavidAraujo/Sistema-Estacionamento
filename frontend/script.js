@@ -25,11 +25,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     bindUI();
     await loadConfig(); // Aguarda carregamento das configurações do banco
     carregarDashboard(); // Carrega dashboard de vagas
+    carregarDashboardCaixa(); // Carrega dashboard de caixa
     updatePatioCarList();
-    // atualiza tempos no pátio e dashboard a cada 10s
+    // atualiza tempos no pátio, dashboard vagas e caixa a cada 10s
     setInterval(() => {
         updatePatioCarList();
         carregarDashboard();
+        carregarDashboardCaixa();
     }, 10000);
 });
 
@@ -182,6 +184,12 @@ function bindUI() {
     document.getElementById('btnBuscaPlaca')?.addEventListener('click', buscarPorPlaca);
     document.getElementById('btnAplicarFiltro')?.addEventListener('click', aplicarFiltroData);
     document.getElementById('btnLimparFiltro')?.addEventListener('click', limparFiltro);
+    
+    // Caixa
+    document.getElementById('toggleCaixaBtn')?.addEventListener('click', toggleCaixaValores);
+    document.getElementById('btnRelatoriosCaixa')?.addEventListener('click', () => openPopup('relatoriosCaixaPopup'));
+    document.getElementById('btnGerarRelatorioCaixa')?.addEventListener('click', gerarRelatorioCaixa);
+    document.getElementById('confirmarPagamentoBtn')?.addEventListener('click', confirmarPagamento);
 
     document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', e => closePopupByElement(e.target.closest('.popup'))));
 
@@ -420,44 +428,117 @@ function calcularPermanencia() {
         total = valorHora + Math.ceil(exced/60) * valorHoraAd;
     }
 
-    document.getElementById('comprovantePermanencia').innerHTML = `
-      <h3>Comprovante de Permanência</h3>
-      <p><b>Placa:</b> ${entrada.placa}</p>
-      <p><b>Entrada:</b> ${horaEntrada.toLocaleString()}</p>
-      <p><b>Saída:</b> ${horaSaida.toLocaleString()}</p>
-      <p><b>Tempo:</b> ${tempoFormatado}</p>
-      <p><b>Valor:</b> R$ ${Number(total).toFixed(2)}</p>
+    // Armazena dados temporários para o pagamento
+    window.dadosPagamento = {
+        placa: entrada.placa,
+        marca: entrada.marca,
+        modelo: entrada.modelo,
+        horaEntrada: horaEntrada,
+        horaSaida: horaSaida,
+        tempo: tempoFormatado,
+        valor: total
+    };
+    
+    // Mostra resumo no modal de pagamento
+    document.getElementById('resumoPagamento').innerHTML = `
+        <h4>Resumo da Permanência</h4>
+        <p><b>Placa:</b> <span>${entrada.placa}</span></p>
+        <p><b>Veículo:</b> <span>${entrada.marca} ${entrada.modelo}</span></p>
+        <p><b>Entrada:</b> <span>${horaEntrada.toLocaleString()}</span></p>
+        <p><b>Saída:</b> <span>${horaSaida.toLocaleString()}</span></p>
+        <p><b>Tempo:</b> <span>${tempoFormatado}</span></p>
+        <p class="valor-total"><b>Total a Pagar:</b> <span>R$ ${Number(total).toFixed(2)}</span></p>
     `;
     
-    // Registra saída no backend (banco de dados)
+    // Fecha modal de saída e abre modal de pagamento
+    closePopup('saidaPopup');
+    
+    if (total > 0) {
+        openPopup('pagamentoPopup');
+    } else {
+        // Se valor é zero, processa direto sem forma de pagamento
+        processarSaida(null);
+    }
+}
+
+///////////////////////////
+// confirmar pagamento
+///////////////////////////
+function confirmarPagamento() {
+    const formaPagamento = document.getElementById('formaPagamento').value;
+    
+    if (!formaPagamento) {
+        alert('Selecione a forma de pagamento');
+        return;
+    }
+    
+    processarSaida(formaPagamento);
+}
+
+///////////////////////////
+// processar saída (após pagamento)
+///////////////////////////
+function processarSaida(formaPagamento) {
+    const dados = window.dadosPagamento;
+    
+    if (!dados) {
+        alert('Dados de pagamento não encontrados');
+        return;
+    }
+    
+    // Registra saída no backend
     fetch(`${BACKEND_BASE}/saida`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-            placa, 
-            valor_pago: total, 
-            tempo_permanencia: tempoFormatado 
+            placa: dados.placa, 
+            valor_pago: dados.valor, 
+            tempo_permanencia: dados.tempo,
+            forma_pagamento: formaPagamento
         })
     })
     .then(res => res.json())
     .then(data => {
         if (!data.success) {
-            console.warn('[front] aviso ao registrar saída:', data.error);
+            alert('Erro ao registrar saída: ' + (data.error || 'Desconhecido'));
+            return;
         }
-        localStorage.removeItem(placa);
+        
+        // Remove do localStorage
+        localStorage.removeItem(dados.placa);
+        
+        // Gera comprovante
+        document.getElementById('comprovantePermanencia').innerHTML = `
+            <h3>✅ Comprovante de Saída</h3>
+            <p><b>Placa:</b> ${dados.placa}</p>
+            <p><b>Veículo:</b> ${dados.marca} ${dados.modelo}</p>
+            <p><b>Entrada:</b> ${dados.horaEntrada.toLocaleString()}</p>
+            <p><b>Saída:</b> ${dados.horaSaida.toLocaleString()}</p>
+            <p><b>Tempo:</b> ${dados.tempo}</p>
+            <p><b>Valor:</b> R$ ${Number(dados.valor).toFixed(2)}</p>
+            ${formaPagamento ? `<p><b>Forma de Pagamento:</b> ${formaPagamento}</p>` : ''}
+            <p style="margin-top:20px;font-size:12px;color:#666;">Obrigado pela preferência!</p>
+        `;
+        
+        // Fecha modal de pagamento e abre comprovante
+        closePopup('pagamentoPopup');
+        openPopup('comprovantePermanenciaPopup');
+        
+        // Limpa formulários
+        document.getElementById('placaSaida').value = '';
+        document.getElementById('formaPagamento').value = '';
+        
+        // Atualiza dashboards
         updatePatioCarList();
         carregarDashboard();
-        openPopup('comprovantePermanenciaPopup');
-        document.getElementById('placaSaida').value = '';
+        carregarDashboardCaixa();
+        
+        // Limpa dados temporários
+        delete window.dadosPagamento;
     })
     .catch(err => {
         console.error('[front] erro ao registrar saída:', err);
-        alert('Erro ao registrar saída no servidor, mas comprovante foi gerado');
-        localStorage.removeItem(placa);
-        updatePatioCarList();
-        carregarDashboard();
-        openPopup('comprovantePermanenciaPopup');
-        document.getElementById('placaSaida').value = '';
+        alert('Erro ao registrar saída no servidor');
     });
 }
 
@@ -465,10 +546,6 @@ function calcularPermanencia() {
 // saída pelo card do veículo
 ///////////////////////////
 function registrarSaidaPeloCard(placa, tempo, valor) {
-    if (!confirm(`Confirma a saída do veículo ${placa}?\n\nTempo: ${tempo}\nValor: R$ ${valor}`)) {
-        return;
-    }
-
     const data = localStorage.getItem(placa);
     if (!data) {
         alert('Veículo não encontrado no cache local.');
@@ -478,45 +555,35 @@ function registrarSaidaPeloCard(placa, tempo, valor) {
     const entrada = JSON.parse(data);
     const horaEntrada = new Date(entrada.horaEntrada);
     const horaSaida = new Date();
-
-    // Registra saída no backend
-    fetch(`${BACKEND_BASE}/saida`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            placa, 
-            valor_pago: valor, 
-            tempo_permanencia: tempo 
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (!data.success) {
-            console.warn('[front] aviso ao registrar saída:', data.error);
-        }
-        
-        // Mostra comprovante
-        document.getElementById('comprovantePermanencia').innerHTML = `
-          <h3>Comprovante de Permanência</h3>
-          <p><b>Placa:</b> ${entrada.placa}</p>
-          <p><b>Entrada:</b> ${horaEntrada.toLocaleString()}</p>
-          <p><b>Saída:</b> ${horaSaida.toLocaleString()}</p>
-          <p><b>Tempo:</b> ${tempo}</p>
-          <p><b>Valor:</b> R$ ${Number(valor).toFixed(2)}</p>
-        `;
-        
-        localStorage.removeItem(placa);
-        updatePatioCarList();
-        carregarDashboard();
-        openPopup('comprovantePermanenciaPopup');
-    })
-    .catch(err => {
-        console.error('[front] erro ao registrar saída:', err);
-        alert('Erro ao registrar saída no servidor, mas o veículo será removido do pátio');
-        localStorage.removeItem(placa);
-        updatePatioCarList();
-        carregarDashboard();
-    });
+    
+    // Armazena dados temporários para o pagamento
+    window.dadosPagamento = {
+        placa: entrada.placa,
+        marca: entrada.marca,
+        modelo: entrada.modelo,
+        horaEntrada: horaEntrada,
+        horaSaida: horaSaida,
+        tempo: tempo,
+        valor: valor
+    };
+    
+    // Mostra resumo no modal de pagamento
+    document.getElementById('resumoPagamento').innerHTML = `
+        <h4>Resumo da Permanência</h4>
+        <p><b>Placa:</b> <span>${entrada.placa}</span></p>
+        <p><b>Veículo:</b> <span>${entrada.marca} ${entrada.modelo}</span></p>
+        <p><b>Entrada:</b> <span>${horaEntrada.toLocaleString()}</span></p>
+        <p><b>Saída:</b> <span>${horaSaida.toLocaleString()}</span></p>
+        <p><b>Tempo:</b> <span>${tempo}</span></p>
+        <p class="valor-total"><b>Total a Pagar:</b> <span>R$ ${Number(valor).toFixed(2)}</span></p>
+    `;
+    
+    if (valor > 0) {
+        openPopup('pagamentoPopup');
+    } else {
+        // Se valor é zero, processa direto sem forma de pagamento
+        processarSaida(null);
+    }
 }
 
 ///////////////////////////
@@ -736,4 +803,192 @@ function buscarPorPlaca() {
             console.error('[front] erro ao buscar histórico:', err);
             document.getElementById('historicoConteudo').innerHTML = '<p>Erro ao conectar ao servidor</p>';
         });
+}
+
+///////////////////////////
+// dashboard caixa
+///////////////////////////
+async function carregarDashboardCaixa() {
+    try {
+        const res = await fetch(`${BACKEND_BASE}/caixa/dashboard`);
+        if (!res.ok) throw new Error('Erro ao carregar dashboard de caixa');
+        
+        const data = await res.json();
+        if (data.success && data.dados) {
+            const { total_recebido, total_dinheiro, total_credito, total_debito, total_pix, total_transacoes } = data.dados;
+            
+            // Atualiza valores no dashboard (mantém mascarados se estiver oculto)
+            const isMasked = document.getElementById('caixaTotalRecebido').classList.contains('masked');
+            
+            document.getElementById('caixaTotalRecebido').dataset.valor = total_recebido;
+            document.getElementById('caixaDinheiro').dataset.valor = total_dinheiro;
+            document.getElementById('caixaCredito').dataset.valor = total_credito;
+            document.getElementById('caixaDebito').dataset.valor = total_debito;
+            document.getElementById('caixaPix').dataset.valor = total_pix;
+            
+            if (!isMasked) {
+                document.getElementById('caixaTotalRecebido').textContent = `R$ ${Number(total_recebido).toFixed(2)}`;
+                document.getElementById('caixaDinheiro').textContent = `R$ ${Number(total_dinheiro).toFixed(2)}`;
+                document.getElementById('caixaCredito').textContent = `R$ ${Number(total_credito).toFixed(2)}`;
+                document.getElementById('caixaDebito').textContent = `R$ ${Number(total_debito).toFixed(2)}`;
+                document.getElementById('caixaPix').textContent = `R$ ${Number(total_pix).toFixed(2)}`;
+            }
+            
+            document.getElementById('caixaTransacoes').textContent = total_transacoes;
+        }
+    } catch (err) {
+        console.error('[front] Erro ao carregar dashboard de caixa:', err);
+    }
+}
+
+function toggleCaixaValores() {
+    const elementos = document.querySelectorAll('.caixa-item .valor');
+    
+    elementos.forEach(el => {
+        if (el.id === 'caixaTransacoes') return; // Não mascara o contador de transações
+        
+        if (el.classList.contains('masked')) {
+            // Mostrar valores
+            el.classList.remove('masked');
+            const valor = parseFloat(el.dataset.valor || 0);
+            el.textContent = `R$ ${valor.toFixed(2)}`;
+        } else {
+            // Ocultar valores
+            el.classList.add('masked');
+            el.textContent = 'R$ ••••••';
+        }
+    });
+    
+    // Alterna ícone do botão
+    const btn = document.getElementById('toggleCaixaBtn');
+    const icon = btn.querySelector('.icon-eye');
+    icon.textContent = icon.textContent === '👁️' ? '🙈' : '👁️';
+}
+
+///////////////////////////
+// relatórios de caixa
+///////////////////////////
+async function gerarRelatorioCaixa() {
+    const dataInicio = document.getElementById('dataInicioCaixa').value;
+    const dataFim = document.getElementById('dataFimCaixa').value;
+    
+    if (!dataInicio && !dataFim) {
+        alert('Selecione pelo menos uma data');
+        return;
+    }
+    
+    try {
+        // Converte para formato brasileiro
+        const params = new URLSearchParams();
+        if (dataInicio) {
+            const [ano, mes, dia] = dataInicio.split('-');
+            params.append('dataInicio', `${dia}/${mes}/${ano}`);
+        }
+        if (dataFim) {
+            const [ano, mes, dia] = dataFim.split('-');
+            params.append('dataFim', `${dia}/${mes}/${ano}`);
+        }
+        
+        const res = await fetch(`${BACKEND_BASE}/caixa/relatorio?${params}`);
+        if (!res.ok) throw new Error('Erro ao gerar relatório');
+        
+        const data = await res.json();
+        
+        if (!data.success || !data.dados) {
+            document.getElementById('relatorioCaixaConteudo').innerHTML = '<p>Erro ao gerar relatório</p>';
+            return;
+        }
+        
+        // Agrupa por data e calcula totais
+        const porData = {};
+        let totalGeral = 0;
+        let totalDinheiro = 0;
+        let totalCredito = 0;
+        let totalDebito = 0;
+        let totalPix = 0;
+        let totalTransacoes = 0;
+        
+        data.dados.forEach(item => {
+            if (!porData[item.data_saida]) {
+                porData[item.data_saida] = { total: 0, formas: {} };
+            }
+            porData[item.data_saida].total += item.total;
+            porData[item.data_saida].formas[item.forma_pagamento] = item;
+            
+            totalGeral += item.total;
+            totalTransacoes += item.quantidade;
+            
+            if (item.forma_pagamento === 'Dinheiro') totalDinheiro += item.total;
+            if (item.forma_pagamento === 'Cartão de Crédito') totalCredito += item.total;
+            if (item.forma_pagamento === 'Cartão de Débito') totalDebito += item.total;
+            if (item.forma_pagamento === 'Pix') totalPix += item.total;
+        });
+        
+        // Gera HTML do relatório
+        let html = `
+            <div class="resumo-financeiro">
+                <div class="resumo-card">
+                    <h4>Total Recebido</h4>
+                    <p>R$ ${totalGeral.toFixed(2)}</p>
+                </div>
+                <div class="resumo-card">
+                    <h4>Transações</h4>
+                    <p>${totalTransacoes}</p>
+                </div>
+                <div class="resumo-card">
+                    <h4>💵 Dinheiro</h4>
+                    <p>R$ ${totalDinheiro.toFixed(2)}</p>
+                </div>
+                <div class="resumo-card">
+                    <h4>💳 Crédito</h4>
+                    <p>R$ ${totalCredito.toFixed(2)}</p>
+                </div>
+                <div class="resumo-card">
+                    <h4>💳 Débito</h4>
+                    <p>R$ ${totalDebito.toFixed(2)}</p>
+                </div>
+                <div class="resumo-card">
+                    <h4>📱 Pix</h4>
+                    <p>R$ ${totalPix.toFixed(2)}</p>
+                </div>
+            </div>
+            
+            <h4>Detalhamento por Data</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Forma de Pagamento</th>
+                        <th>Quantidade</th>
+                        <th>Total (R$)</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+        
+        Object.keys(porData).sort().reverse().forEach(data => {
+            const primeiro = true;
+            Object.values(porData[data].formas).forEach(item => {
+                html += `
+                    <tr>
+                        <td>${item.data_saida}</td>
+                        <td>${item.forma_pagamento}</td>
+                        <td style="text-align:center">${item.quantidade}</td>
+                        <td style="text-align:right">R$ ${Number(item.total).toFixed(2)}</td>
+                    </tr>
+                `;
+            });
+        });
+        
+        html += `
+                </tbody>
+            </table>
+        `;
+        
+        document.getElementById('relatorioCaixaConteudo').innerHTML = html;
+        
+    } catch (err) {
+        console.error('[front] erro ao gerar relatório:', err);
+        document.getElementById('relatorioCaixaConteudo').innerHTML = '<p>Erro ao conectar ao servidor</p>';
+    }
 }

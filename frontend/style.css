@@ -25,7 +25,245 @@ button {
     cursor:pointer;
 }
 button:hover{opacity:.95}
-main { padding:18px; max-width:980px; margin:0 auto; }
+
+/* Layout Principal */
+.main-container {
+    display: flex;
+    gap: 20px;
+    padding: 18px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+main {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Sidebar Caixa */
+#caixaSidebar {
+    width: 300px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    color: white;
+    height: fit-content;
+    position: sticky;
+    top: 20px;
+}
+
+.caixa-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid rgba(255,255,255,0.2);
+}
+
+.caixa-header h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.btn-toggle {
+    background: rgba(255,255,255,0.2);
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 18px;
+    transition: all 0.3s ease;
+}
+
+.btn-toggle:hover {
+    background: rgba(255,255,255,0.3);
+    opacity: 1;
+}
+
+.caixa-content {
+    margin: 20px 0;
+}
+
+.caixa-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+}
+
+.caixa-item .label {
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+.caixa-item .valor {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 1px;
+}
+
+.caixa-item.total-recebido {
+    background: rgba(255,255,255,0.15);
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+}
+
+.caixa-item.total-recebido .valor {
+    font-size: 24px;
+}
+
+.caixa-divider {
+    height: 1px;
+    background: rgba(255,255,255,0.2);
+    margin: 15px 0;
+}
+
+.btn-relatorios {
+    width: 100%;
+    background: rgba(255,255,255,0.9);
+    color: #667eea;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 20px;
+    transition: all 0.3s ease;
+}
+
+.btn-relatorios:hover {
+    background: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    opacity: 1;
+}
+
+/* Valores mascarados/visíveis */
+.valor.masked {
+    font-family: monospace;
+}
+
+/* Modal de Pagamento */
+.resumo-pagamento {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border-left: 4px solid #0b5ed7;
+}
+
+.resumo-pagamento h4 {
+    margin: 0 0 15px 0;
+    color: #333;
+}
+
+.resumo-pagamento p {
+    margin: 8px 0;
+    display: flex;
+    justify-content: space-between;
+    font-size: 15px;
+}
+
+.resumo-pagamento .valor-total {
+    font-size: 24px;
+    font-weight: bold;
+    color: #0b5ed7;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 2px solid #dee2e6;
+}
+
+.btn-primary {
+    background: #28a745;
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 15px;
+}
+
+.btn-primary:hover {
+    background: #218838;
+    opacity: 1;
+}
+
+/* Relatórios de Caixa */
+.relatorios-filtros {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    display: flex;
+    gap: 15px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.relatorios-filtros label {
+    margin: 0;
+}
+
+.relatorios-filtros input {
+    max-width: 180px;
+}
+
+.relatorio-caixa-conteudo {
+    min-height: 400px;
+}
+
+.relatorio-caixa-conteudo table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+.relatorio-caixa-conteudo th {
+    background: #667eea;
+    color: white;
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+}
+
+.relatorio-caixa-conteudo td {
+    padding: 12px;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.relatorio-caixa-conteudo tr:hover {
+    background: #f8f9fa;
+}
+
+.resumo-financeiro {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+.resumo-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.resumo-card h4 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+.resumo-card p {
+    margin: 0;
+    font-size: 28px;
+    font-weight: bold;
+}
 
 /* Dashboard de Vagas */
 #dashboard { background:#fff; padding:14px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.04); margin-bottom:20px; }
@@ -86,9 +324,23 @@ input[type="text"], input[type="number"], select { width:100%; padding:8px 10px;
 .historico-conteudo td { border: 1px solid #ddd; padding: 8px; }
 .historico-conteudo tr:hover { background: #f9f9f9; }
 
+@media(max-width:1024px){
+    .main-container {
+        flex-direction: column;
+    }
+    
+    #caixaSidebar {
+        width: 100%;
+        position: relative;
+        top: 0;
+    }
+}
+
 @media(max-width:480px){ 
     .popup-content{ max-width:95%; } 
     .popup-content-large { max-width: 95%; max-height: 90vh; }
     .historico-actions { flex-direction: column; }
     .historico-actions button { width: 100%; }
+    .relatorios-filtros { flex-direction: column; }
+    .relatorios-filtros input { max-width: 100%; }
 }
