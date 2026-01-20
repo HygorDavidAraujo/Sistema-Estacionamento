@@ -46,9 +46,6 @@ db.serialize(() => {
         else console.log('[BACK] Tabela historico pronta');
     });
 
-    // Garante índice único para entry_id (permite múltiplos NULLs)
-    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_historico_entry_id ON historico(entry_id)`);
-
     // Tabela configurações
     db.run(`
         CREATE TABLE IF NOT EXISTS configuracoes (
@@ -99,13 +96,20 @@ function ensureEntryIdColumn() {
             return;
         }
         const hasEntryId = rows.some(r => r.name === 'entry_id');
+        const createIndex = () => db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_historico_entry_id ON historico(entry_id)`);
+
         if (!hasEntryId) {
             db.run(`ALTER TABLE historico ADD COLUMN entry_id TEXT`, (alterErr) => {
-                if (alterErr) console.error('[BACK] Erro ao adicionar entry_id:', alterErr);
-                else console.log('[BACK] Coluna entry_id adicionada');
+                if (alterErr) {
+                    console.error('[BACK] Erro ao adicionar entry_id:', alterErr);
+                    return;
+                }
+                console.log('[BACK] Coluna entry_id adicionada');
+                createIndex();
             });
+        } else {
+            createIndex();
         }
-        db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_historico_entry_id ON historico(entry_id)`);
     });
 }
 
@@ -209,8 +213,13 @@ app.post("/placa/reconhecer", upload.single('image'), async (req, res) => {
     const providerUrl = process.env.ANPR_URL;
     const providerKey = process.env.ANPR_API_KEY;
 
+    const fakePlate = sanitizePlate(process.env.ANPR_FAKE_PLATE || '');
+
     if (!providerUrl) {
-        return res.json({ placa: null, mensagem: 'Serviço de OCR não configurado no backend (defina ANPR_URL).' });
+        if (fakePlate) {
+            return res.json({ placa: fakePlate, origem: 'fake-env' });
+        }
+        return res.json({ placa: null, mensagem: 'Serviço de OCR não configurado no backend (defina ANPR_URL ou ANPR_FAKE_PLATE).' });
     }
 
     if (typeof FormData === 'undefined' || typeof Blob === 'undefined') {
@@ -230,6 +239,7 @@ app.post("/placa/reconhecer", upload.single('image'), async (req, res) => {
 
         if (!resp.ok) {
             console.warn('[BACK] Provider ANPR falhou:', resp.status);
+            if (fakePlate) return res.json({ placa: fakePlate, origem: 'fake-env' });
             return res.json({ placa: null, mensagem: 'Provider ANPR indisponível.' });
         }
 
@@ -237,9 +247,11 @@ app.post("/placa/reconhecer", upload.single('image'), async (req, res) => {
         const placa = sanitizePlate(data?.placa || data?.plate || data?.results?.[0]?.plate);
         if (placa) return res.json({ placa, origem: 'provider' });
 
+        if (fakePlate) return res.json({ placa: fakePlate, origem: 'fake-env' });
         return res.json({ placa: null, mensagem: 'Placa não reconhecida.' });
     } catch (err) {
         console.error('[BACK] Erro no reconhecimento de placa:', err);
+        if (fakePlate) return res.json({ placa: fakePlate, origem: 'fake-env' });
         return res.json({ placa: null, mensagem: 'Erro ao processar a imagem.' });
     }
 });

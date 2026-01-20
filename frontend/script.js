@@ -511,11 +511,8 @@ function registrarEntrada() {
                 <p>Apresente este QR Code na saída.</p>
             </div>
         `;
-        try {
-            QRCodeService.render('qrCodeEntrada', entrada.entryId, { size: 164 });
-        } catch (err) {
-            console.warn('[front] não foi possível gerar QR Code:', err);
-        }
+        QRCodeService.render('qrCodeEntrada', entrada.entryId, { size: 164 })
+            .catch(err => console.warn('[front] não foi possível gerar QR Code:', err));
         openPopup('comprovanteEntradaPopup');
     })
     .catch(err => {
