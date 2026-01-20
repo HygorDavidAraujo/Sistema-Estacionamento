@@ -106,6 +106,19 @@
         <label for="placaEntrada">Placa</label>
         <input id="placaEntrada" type="text" placeholder="AAA0A00" autocomplete="off" />
 
+        <div class="inline-actions">
+            <button id="scanPlacaBtn" type="button">Scanear Placa</button>
+            <button id="fecharCameraEntradaBtn" type="button" class="btn-ghost" aria-hidden="true">Fechar Câmera</button>
+        </div>
+
+        <div id="cameraEntradaContainer" class="camera-container" aria-hidden="true">
+            <video id="entradaCameraPreview" autoplay muted playsinline></video>
+            <div class="camera-actions">
+                <button id="capturarPlacaBtn" type="button">Capturar Placa</button>
+                <span class="camera-status" id="entradaCameraStatus">Centralize a placa na área do vídeo.</span>
+            </div>
+        </div>
+
         <label for="marcaEntrada">Marca</label>
         <input id="marcaEntrada" type="text" />
 
@@ -127,6 +140,20 @@
 
         <label for="placaSaida">Placa</label>
         <input id="placaSaida" type="text" placeholder="AAA0A00" autocomplete="off" />
+
+        <div class="inline-actions">
+            <button id="scanQrSaidaBtn" type="button">Scanear QR Code</button>
+            <input id="qrSaidaInput" type="text" placeholder="Aproxime o leitor de QR Code" autocomplete="off" />
+        </div>
+
+        <div id="qrCameraContainer" class="camera-container" aria-hidden="true">
+            <video id="qrCameraPreview" autoplay muted playsinline></video>
+            <canvas id="qrCameraCanvas" aria-hidden="true"></canvas>
+            <div class="camera-actions">
+                <button id="fecharQrCameraBtn" type="button">Fechar Câmera</button>
+                <span class="camera-status" id="qrCameraStatus">Aponte o QR Code para a câmera.</span>
+            </div>
+        </div>
 
         <button id="calcularBtn">Calcular Permanência</button>
     </div>
@@ -258,6 +285,17 @@
         <div id="relatorioCaixaConteudo" class="relatorio-caixa-conteudo"></div>
     </div>
 </div>
+
+<!-- Libs externas leves para QR Code e leitura de QR -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-6o2s8m8CCfY0N5V2sCvYH7ycGsRVmKcJsteVEh9UpAJZxkd06Pq4jG3Ejj6LikUeJ8m+RaH//4X4C0L8i1Bw3g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" integrity="sha256-7aX6ixkmKuuNHYsYvwdivgLPgAvFp8ZUBKbjsgg7sug=" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+<!-- Serviços modulares -->
+<script src="frontend/js/camera.service.js"></script>
+<script src="frontend/js/plate.service.js"></script>
+<script src="frontend/js/qrcode.service.js"></script>
+<script src="frontend/js/qr-reader.service.js"></script>
+<script src="frontend/js/storage.service.js"></script>
 
 <script src="frontend/script.js"></script>
 </body>

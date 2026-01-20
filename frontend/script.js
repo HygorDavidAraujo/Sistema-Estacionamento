@@ -22,6 +22,7 @@ async function detectBackendPort(startPort = 3000, maxPort = 3005) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     BACKEND_BASE = await detectBackendPort();
+    StorageService.migrateLegacyEntries?.();
     bindUI();
     await loadConfig(); // Aguarda carregamento das configurações do banco
     carregarDashboard(); // Carrega dashboard de vagas
@@ -47,43 +48,34 @@ function formatDuration(ms) {
     return `${h}:${m}:${s}`;
 }
 
+function calcularValoresPermanencia(horaEntradaISO, horaSaida = new Date()) {
+    const horaEntrada = new Date(horaEntradaISO);
+    const ms = diffMs(horaEntrada, horaSaida);
+    const tempoFormatado = formatDuration(ms);
+    const totalMin = Math.floor(ms / 60000);
+
+    const valorHora = parseFloat(localStorage.getItem('valorHora')) || 0;
+    const valorHoraAd = parseFloat(localStorage.getItem('valorHoraAdicional')) || 0;
+    const tolerancia = parseInt(localStorage.getItem('toleranciaHoraAdicional')) || 0;
+
+    let total = 0;
+    if (totalMin <= tolerancia) {
+        total = 0;
+    } else if (totalMin <= 60) {
+        total = valorHora;
+    } else {
+        const exced = totalMin - 60;
+        total = valorHora + Math.ceil(exced/60) * valorHoraAd;
+    }
+
+    return { tempoFormatado, total, horaEntrada, horaSaida, totalMin };
+}
+
 ///////////////////////////
 // backend consulta (via backend com API gratuita)
 ///////////////////////////
 async function consultarPlacaAPI(placa) {
-    try {
-        console.log('[front] consultando backend ->', `${BACKEND_BASE}/placa/${placa}`);
-        const res = await fetch(`${BACKEND_BASE}/placa/${placa}`, { method: 'GET' });
-        if (!res.ok) {
-            console.error('[front] backend respondeu com erro', res.status);
-            return null;
-        }
-        const data = await res.json();
-        console.log('[front] resposta backend:', data);
-
-        if (data.error) {
-            console.warn('[front] backend error:', data.error);
-            return null;
-        }
-
-        if (data.encontrado === false) {
-            return {
-                marca: data.marca || "Não encontrado",
-                modelo: data.modelo || "Não encontrado",
-                cor: data.cor || ""
-            };
-        }
-
-        return {
-            marca: data.marca || "",
-            modelo: data.modelo || "",
-            cor: data.cor || ""
-        };
-
-    } catch (e) {
-        console.error('[front] erro ao acessar backend:', e);
-        return null;
-    }
+    return PlateService.lookupPlateAPI(placa);
 }
 
 ///////////////////////////
@@ -161,6 +153,119 @@ const autoFillVehicleDataAPI = debounce(async function() {
 }, 600);
 
 ///////////////////////////
+// captura de placa via câmera
+///////////////////////////
+async function iniciarScanPlaca() {
+    const container = document.getElementById('cameraEntradaContainer');
+    const statusEl = document.getElementById('entradaCameraStatus');
+    const videoEl = document.getElementById('entradaCameraPreview');
+    const closeBtn = document.getElementById('fecharCameraEntradaBtn');
+    if (!container || !videoEl) return;
+
+    container.setAttribute('aria-hidden', 'false');
+    closeBtn?.setAttribute('aria-hidden', 'false');
+    statusEl.textContent = 'Solicitando acesso à câmera...';
+
+    try {
+        await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } });
+        statusEl.textContent = 'Centralize a placa e toque em Capturar.';
+    } catch (err) {
+        statusEl.textContent = 'Não foi possível acessar a câmera.';
+        alert('Não foi possível acessar a câmera: ' + err.message);
+        fecharCameraEntrada();
+    }
+}
+
+async function capturarPlacaDaCamera() {
+    const videoEl = document.getElementById('entradaCameraPreview');
+    const statusEl = document.getElementById('entradaCameraStatus');
+    if (!videoEl || !statusEl) return;
+    if (!videoEl.srcObject) {
+        statusEl.textContent = 'Ative a câmera antes de capturar.';
+        return;
+    }
+
+    statusEl.textContent = 'Capturando imagem...';
+    try {
+        const blob = await CameraService.captureBlob(videoEl);
+        statusEl.textContent = 'Reconhecendo placa...';
+        const placa = await PlateService.recognizePlateFromImage(blob);
+        if (placa) {
+            document.getElementById('placaEntrada').value = placa;
+            statusEl.textContent = `Placa detectada: ${placa}`;
+            autoFillVehicleDataAPI();
+            setTimeout(fecharCameraEntrada, 600);
+        } else {
+            statusEl.textContent = 'Não foi possível ler a placa. Tente aproximar ou ajustar o foco.';
+        }
+    } catch (err) {
+        console.error('[front] erro ao capturar placa:', err);
+        statusEl.textContent = 'Erro ao capturar imagem.';
+        alert('Erro ao capturar a placa: ' + err.message);
+    }
+}
+
+function fecharCameraEntrada() {
+    const container = document.getElementById('cameraEntradaContainer');
+    const videoEl = document.getElementById('entradaCameraPreview');
+    const closeBtn = document.getElementById('fecharCameraEntradaBtn');
+    if (container) container.setAttribute('aria-hidden', 'true');
+    if (closeBtn) closeBtn.setAttribute('aria-hidden', 'true');
+    CameraService.stopPreview(videoEl);
+}
+
+///////////////////////////
+// QR Code saída (câmera e leitor USB)
+///////////////////////////
+async function iniciarScanQrSaida() {
+    const container = document.getElementById('qrCameraContainer');
+    const statusEl = document.getElementById('qrCameraStatus');
+    const videoEl = document.getElementById('qrCameraPreview');
+    const canvasEl = document.getElementById('qrCameraCanvas');
+    if (!container || !videoEl) return;
+
+    container.setAttribute('aria-hidden', 'false');
+    statusEl.textContent = 'Abrindo câmera...';
+    try {
+        await QrReaderService.start(videoEl, canvasEl, tratarQrCodeSaida);
+        statusEl.textContent = 'Aponte o QR Code para a câmera.';
+    } catch (err) {
+        statusEl.textContent = 'Não foi possível iniciar a leitura.';
+        alert('Não foi possível iniciar a câmera: ' + err.message);
+        fecharCameraSaida();
+    }
+}
+
+function fecharCameraSaida() {
+    const container = document.getElementById('qrCameraContainer');
+    const videoEl = document.getElementById('qrCameraPreview');
+    if (container) container.setAttribute('aria-hidden', 'true');
+    QrReaderService.stop(videoEl);
+}
+
+function tratarQrCodeSaida(payload) {
+    let entryId = payload;
+    let plateFromPayload = '';
+    try {
+        const parsed = JSON.parse(payload);
+        entryId = parsed.entryId || parsed.id || parsed.entry_id || payload;
+        plateFromPayload = parsed.placa || parsed.plate || '';
+    } catch (e) {
+        // payload não é JSON, usa texto puro
+    }
+
+    const entry = StorageService.getEntryById(entryId) || StorageService.getEntryByPlate(plateFromPayload);
+    if (!entry) {
+        alert('QR Code não corresponde a uma entrada ativa.');
+        return;
+    }
+
+    document.getElementById('placaSaida').value = entry.placa;
+    fecharCameraSaida();
+    prepararPagamento(entry);
+}
+
+///////////////////////////
 // UI bindings
 ///////////////////////////
 function bindUI() {
@@ -175,6 +280,15 @@ function bindUI() {
     document.getElementById('registrarBtn').onclick = registrarEntrada;
     document.getElementById('calcularBtn').onclick = calcularPermanencia;
     document.getElementById('saveConfigBtn').onclick = saveConfig;
+
+    document.getElementById('scanPlacaBtn')?.addEventListener('click', iniciarScanPlaca);
+    document.getElementById('capturarPlacaBtn')?.addEventListener('click', capturarPlacaDaCamera);
+    document.getElementById('fecharCameraEntradaBtn')?.addEventListener('click', fecharCameraEntrada);
+
+    document.getElementById('scanQrSaidaBtn')?.addEventListener('click', iniciarScanQrSaida);
+    document.getElementById('fecharQrCameraBtn')?.addEventListener('click', fecharCameraSaida);
+
+    QrReaderService.bindKeyboardInput(document.getElementById('qrSaidaInput'), tratarQrCodeSaida);
 
     document.getElementById('printEntradaBtn')?.addEventListener('click', () => printHtml(document.getElementById('comprovanteEntrada').innerHTML));
     document.getElementById('printPermanenciaBtn')?.addEventListener('click', () => printHtml(document.getElementById('comprovantePermanencia').innerHTML));
@@ -199,10 +313,8 @@ function bindUI() {
     // Delegação de eventos para botões de saída nos cards (criados dinamicamente)
     document.getElementById('patioCarList').addEventListener('click', (e) => {
         if (e.target.classList.contains('btn-saida-card')) {
-            const placa = e.target.dataset.placa;
-            const tempo = e.target.dataset.tempo;
-            const valor = parseFloat(e.target.dataset.valor);
-            registrarSaidaPeloCard(placa, tempo, valor);
+            const entryId = e.target.dataset.entryId;
+            registrarSaidaPeloCard(entryId);
         }
     });
 
@@ -215,7 +327,12 @@ function bindUI() {
 ///////////////////////////
 function openPopup(id) { const el = document.getElementById(id); if (el) el.setAttribute('aria-hidden','false'); }
 function closePopup(id) { const el = document.getElementById(id); if (el) el.setAttribute('aria-hidden','true'); }
-function closePopupByElement(el) { if (!el) return; el.setAttribute('aria-hidden','true'); }
+function closePopupByElement(el) {
+    if (!el) return;
+    el.setAttribute('aria-hidden','true');
+    if (el.id === 'entradaPopup') fecharCameraEntrada();
+    if (el.id === 'saidaPopup') fecharCameraSaida();
+}
 function toggleMenu(show) { const el = document.getElementById('menu'); if (!el) return; el.setAttribute('aria-hidden', show ? 'false' : 'true'); }
 
 ///////////////////////////
@@ -348,13 +465,13 @@ function registrarEntrada() {
     if (!isValidPlaca(placa)) { alert('Placa inválida. Use formato AAA1234 ou AAA1A23.'); return; }
     if (!placa || !marca || !modelo) { alert('Placa, marca e modelo são obrigatórios.'); return; }
 
-    const entrada = { placa, marca, modelo, cor, horaEntrada: new Date().toISOString() };
+    const entrada = { entryId: StorageService.generateEntryId(), placa, marca, modelo, cor, horaEntrada: new Date().toISOString() };
 
     // Salva no backend (banco de dados)
     fetch(`${BACKEND_BASE}/entrada`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ placa, marca, modelo, cor })
+        body: JSON.stringify({ placa, marca, modelo, cor, entryId: entrada.entryId })
     })
     .then(res => res.json())
     .then(data => {
@@ -365,11 +482,12 @@ function registrarEntrada() {
         
         // salva cache local (vehicleDB) e entrada
         saveVehicleInfo(placa, marca, modelo, cor);
-        localStorage.setItem(placa, JSON.stringify(entrada));
+        StorageService.saveEntry(entrada);
 
         updatePatioCarList();
         carregarDashboard();
         clearEntradaForm();
+        fecharCameraEntrada();
         closePopup('entradaPopup');
 
         // Busca valores atualizados do banco
@@ -379,6 +497,7 @@ function registrarEntrada() {
 
         document.getElementById('comprovanteEntrada').innerHTML = `
             <h3>Comprovante de Entrada</h3>
+            <p><b>ID da Entrada:</b> ${entrada.entryId}</p>
             <p><b>Placa:</b> ${placa}</p>
             <p><b>Marca:</b> ${marca}</p>
             <p><b>Modelo:</b> ${modelo}</p>
@@ -387,7 +506,16 @@ function registrarEntrada() {
             <p><b>1ª Hora:</b> R$ ${valorHora}</p>
             <p><b>Hora Adicional:</b> R$ ${valorHoraAdc}</p>
             <p><b>Tolerância:</b> ${tolerancia} min</p>
+            <div class="qr-area">
+                <div id="qrCodeEntrada"></div>
+                <p>Apresente este QR Code na saída.</p>
+            </div>
         `;
+        try {
+            QRCodeService.render('qrCodeEntrada', entrada.entryId, { size: 164 });
+        } catch (err) {
+            console.warn('[front] não foi possível gerar QR Code:', err);
+        }
         openPopup('comprovanteEntradaPopup');
     })
     .catch(err => {
@@ -399,66 +527,56 @@ function registrarEntrada() {
 ///////////////////////////
 // calcular permanência
 ///////////////////////////
-function calcularPermanencia() {
-    const placa = normalizePlaca(document.getElementById('placaSaida').value);
-    if (!placa) return alert('Informe a placa.');
-    if (!isValidPlaca(placa)) return alert('Placa inválida. Use formato AAA1234 ou AAA1A23.');
-    const data = localStorage.getItem(placa);
-    if (!data) return alert('Veículo não encontrado.');
-    const entrada = JSON.parse(data);
-    const horaEntrada = new Date(entrada.horaEntrada), horaSaida = new Date();
-    const ms = diffMs(horaEntrada, horaSaida);
-    const tempoFormatado = formatDuration(ms);
-    const totalMin = Math.floor(ms / 60000);
-
-    const valorHora = parseFloat(localStorage.getItem('valorHora')) || 0;
-    const valorHoraAd = parseFloat(localStorage.getItem('valorHoraAdicional')) || 0;
-    const tolerancia = parseInt(localStorage.getItem('toleranciaHoraAdicional')) || 0;
-
-    let total = 0;
-    
-    // Aplica tolerância desde o início
-    if (totalMin <= tolerancia) {
-        total = 0; // Dentro da tolerância, não cobra
-    } else if (totalMin <= 60) {
-        total = valorHora; // Primeira hora
-    } else {
-        // Após primeira hora, cobra hora inicial + horas adicionais
-        const exced = totalMin - 60;
-        total = valorHora + Math.ceil(exced/60) * valorHoraAd;
+function prepararPagamento(entry) {
+    if (!entry) {
+        alert('Entrada não localizada.');
+        return;
     }
+
+    const { tempoFormatado, total, horaEntrada, horaSaida } = calcularValoresPermanencia(entry.horaEntrada, new Date());
 
     // Armazena dados temporários para o pagamento
     window.dadosPagamento = {
-        placa: entrada.placa,
-        marca: entrada.marca,
-        modelo: entrada.modelo,
+        entryId: entry.entryId,
+        placa: entry.placa,
+        marca: entry.marca,
+        modelo: entry.modelo,
         horaEntrada: horaEntrada,
         horaSaida: horaSaida,
         tempo: tempoFormatado,
         valor: total
     };
-    
+
     // Mostra resumo no modal de pagamento
     document.getElementById('resumoPagamento').innerHTML = `
         <h4>Resumo da Permanência</h4>
-        <p><b>Placa:</b> <span>${entrada.placa}</span></p>
-        <p><b>Veículo:</b> <span>${entrada.marca} ${entrada.modelo}</span></p>
         <p><b>Entrada:</b> <span>${horaEntrada.toLocaleString()}</span></p>
         <p><b>Saída:</b> <span>${horaSaida.toLocaleString()}</span></p>
         <p><b>Tempo:</b> <span>${tempoFormatado}</span></p>
+        <p><b>Veículo:</b> <span>${entry.marca} ${entry.modelo}</span></p>
+        <p><b>Placa:</b> <span>${entry.placa}</span></p>
+        <p><b>ID:</b> <span>${entry.entryId}</span></p>
         <p class="valor-total"><b>Total a Pagar:</b> <span>R$ ${Number(total).toFixed(2)}</span></p>
     `;
-    
+
     // Fecha modal de saída e abre modal de pagamento
     closePopup('saidaPopup');
-    
+
     if (total > 0) {
         openPopup('pagamentoPopup');
     } else {
-        // Se valor é zero, processa direto sem forma de pagamento
         processarSaida(null);
     }
+}
+
+///////////////////////////
+function calcularPermanencia() {
+    const placa = normalizePlaca(document.getElementById('placaSaida').value);
+    if (!placa) return alert('Informe a placa.');
+    if (!isValidPlaca(placa)) return alert('Placa inválida. Use formato AAA1234 ou AAA1A23.');
+    const entrada = StorageService.getEntryByPlate(placa);
+    if (!entrada) return alert('Veículo não encontrado.');
+    prepararPagamento(entrada);
 }
 
 ///////////////////////////
@@ -492,6 +610,7 @@ function processarSaida(formaPagamento) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
             placa: dados.placa, 
+            entryId: dados.entryId,
             valor_pago: dados.valor, 
             tempo_permanencia: dados.tempo,
             forma_pagamento: formaPagamento
@@ -505,11 +624,12 @@ function processarSaida(formaPagamento) {
         }
         
         // Remove do localStorage
-        localStorage.removeItem(dados.placa);
+        StorageService.removeEntry(dados.entryId);
         
         // Gera comprovante
         document.getElementById('comprovantePermanencia').innerHTML = `
             <h3>✅ Comprovante de Saída</h3>
+            <p><b>ID da Entrada:</b> ${dados.entryId}</p>
             <p><b>Placa:</b> ${dados.placa}</p>
             <p><b>Veículo:</b> ${dados.marca} ${dados.modelo}</p>
             <p><b>Entrada:</b> ${dados.horaEntrada.toLocaleString()}</p>
@@ -545,45 +665,13 @@ function processarSaida(formaPagamento) {
 ///////////////////////////
 // saída pelo card do veículo
 ///////////////////////////
-function registrarSaidaPeloCard(placa, tempo, valor) {
-    const data = localStorage.getItem(placa);
-    if (!data) {
+function registrarSaidaPeloCard(entryId) {
+    const entrada = StorageService.getEntryById(entryId);
+    if (!entrada) {
         alert('Veículo não encontrado no cache local.');
         return;
     }
-
-    const entrada = JSON.parse(data);
-    const horaEntrada = new Date(entrada.horaEntrada);
-    const horaSaida = new Date();
-    
-    // Armazena dados temporários para o pagamento
-    window.dadosPagamento = {
-        placa: entrada.placa,
-        marca: entrada.marca,
-        modelo: entrada.modelo,
-        horaEntrada: horaEntrada,
-        horaSaida: horaSaida,
-        tempo: tempo,
-        valor: valor
-    };
-    
-    // Mostra resumo no modal de pagamento
-    document.getElementById('resumoPagamento').innerHTML = `
-        <h4>Resumo da Permanência</h4>
-        <p><b>Placa:</b> <span>${entrada.placa}</span></p>
-        <p><b>Veículo:</b> <span>${entrada.marca} ${entrada.modelo}</span></p>
-        <p><b>Entrada:</b> <span>${horaEntrada.toLocaleString()}</span></p>
-        <p><b>Saída:</b> <span>${horaSaida.toLocaleString()}</span></p>
-        <p><b>Tempo:</b> <span>${tempo}</span></p>
-        <p class="valor-total"><b>Total a Pagar:</b> <span>R$ ${Number(valor).toFixed(2)}</span></p>
-    `;
-    
-    if (valor > 0) {
-        openPopup('pagamentoPopup');
-    } else {
-        // Se valor é zero, processa direto sem forma de pagamento
-        processarSaida(null);
-    }
+    prepararPagamento(entrada);
 }
 
 ///////////////////////////
@@ -619,46 +707,24 @@ function updatePatioCarList() {
     const patio = document.getElementById('patioCarList');
     if (!patio) return;
     patio.innerHTML = '';
-    const ignore = ['valorHora','valorHoraAdicional','toleranciaHoraAdicional','vehicleDB'];
-    Object.keys(localStorage).forEach(k => {
-        if (ignore.includes(k)) return;
-        try {
-            const ent = JSON.parse(localStorage.getItem(k));
-            if (!ent || !ent.horaEntrada) return;
-            const inicio = new Date(ent.horaEntrada), agora = new Date();
-            const ms = diffMs(inicio, agora);
-            const tempo = formatDuration(ms);
-            const totalMin = Math.floor(ms / 60000);
-            
-            // Calcula valor devido
-            const valorHora = parseFloat(localStorage.getItem('valorHora')) || 0;
-            const valorHoraAd = parseFloat(localStorage.getItem('valorHoraAdicional')) || 0;
-            const tolerancia = parseInt(localStorage.getItem('toleranciaHoraAdicional')) || 0;
-            
-            let valorDevido = 0;
-            
-            // Aplica tolerância desde o início
-            if (totalMin <= tolerancia) {
-                valorDevido = 0; // Dentro da tolerância, não cobra
-            } else if (totalMin <= 60) {
-                valorDevido = valorHora; // Primeira hora
-            } else {
-                // Após primeira hora, cobra hora inicial + horas adicionais
-                const exced = totalMin - 60;
-                valorDevido = valorHora + Math.ceil(exced/60) * valorHoraAd;
-            }
-            
-            const div = document.createElement('div');
-            div.className = 'car-item';
-            div.innerHTML = `<p><b>Placa:</b> ${ent.placa}</p>
-                             <p><b>Marca:</b> ${ent.marca}</p>
-                             <p><b>Modelo:</b> ${ent.modelo}</p>
-                             <p><b>Cor:</b> ${ent.cor}</p>
-                             <p><b>Tempo no Pátio:</b> ${tempo}</p>
-                             <p><b>Valor Devido:</b> <span class="valor-devido">R$ ${valorDevido.toFixed(2)}</span></p>
-                             <button class="btn-saida-card" data-placa="${ent.placa}" data-tempo="${tempo}" data-valor="${valorDevido.toFixed(2)}">Registrar Saída</button>`;
-            patio.appendChild(div);
-        } catch(e){ /* ignora chaves inválidas */ }
+    const entries = StorageService.listActiveEntries();
+    if (!entries || entries.length === 0) {
+        patio.innerHTML = '<p>Nenhum veículo no pátio.</p>';
+        return;
+    }
+
+    entries.forEach(ent => {
+        const { tempoFormatado, total } = calcularValoresPermanencia(ent.horaEntrada, new Date());
+        const div = document.createElement('div');
+        div.className = 'car-item';
+        div.innerHTML = `<p><b>Placa:</b> ${ent.placa}</p>
+                         <p><b>Marca:</b> ${ent.marca}</p>
+                         <p><b>Modelo:</b> ${ent.modelo}</p>
+                         <p><b>Cor:</b> ${ent.cor}</p>
+                         <p><b>Tempo no Pátio:</b> ${tempoFormatado}</p>
+                         <p><b>Valor Devido:</b> <span class="valor-devido">R$ ${total.toFixed(2)}</span></p>
+                         <button class="btn-saida-card" data-entry-id="${ent.entryId}">Registrar Saída</button>`;
+        patio.appendChild(div);
     });
 }
 
