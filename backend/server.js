@@ -2,6 +2,7 @@ import express from "express";
 import fetch from "node-fetch";
 import cors from "cors";
 import sqlite3 from "sqlite3";
+import multer from "multer";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 
@@ -11,6 +12,7 @@ const __dirname = dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json());
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
 
 // Banco de dados SQLite
 const db = new sqlite3.Database(`${__dirname}/estacionamento.db`, (err) => {
@@ -24,6 +26,7 @@ db.serialize(() => {
     db.run(`
         CREATE TABLE IF NOT EXISTS historico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id TEXT,
             placa TEXT NOT NULL,
             marca TEXT,
             modelo TEXT,
@@ -42,6 +45,9 @@ db.serialize(() => {
         if (err) console.error('[BACK] Erro ao criar tabela historico:', err);
         else console.log('[BACK] Tabela historico pronta');
     });
+
+    // Garante índice único para entry_id (permite múltiplos NULLs)
+    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_historico_entry_id ON historico(entry_id)`);
 
     // Tabela configurações
     db.run(`
@@ -84,6 +90,26 @@ db.serialize(() => {
 // API gratuita (sem credencial) para consulta de placa
 // Fonte: apicarros.com - retorna marca, modelo, cor, etc.
 const FREE_API = 'https://apicarros.com/v1/consulta';
+
+// Garante que a coluna entry_id exista (migração leve)
+function ensureEntryIdColumn() {
+    db.all(`PRAGMA table_info(historico)`, (err, rows) => {
+        if (err) {
+            console.error('[BACK] Erro ao inspecionar tabela historico:', err);
+            return;
+        }
+        const hasEntryId = rows.some(r => r.name === 'entry_id');
+        if (!hasEntryId) {
+            db.run(`ALTER TABLE historico ADD COLUMN entry_id TEXT`, (alterErr) => {
+                if (alterErr) console.error('[BACK] Erro ao adicionar entry_id:', alterErr);
+                else console.log('[BACK] Coluna entry_id adicionada');
+            });
+        }
+        db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_historico_entry_id ON historico(entry_id)`);
+    });
+}
+
+ensureEntryIdColumn();
 
 function sanitizePlate(p) {
     if (!p) return '';
@@ -168,9 +194,59 @@ app.get("/placa/:placa", async (req, res) => {
     }
 });
 
+// ROTA PARA RECONHECER PLACA VIA IMAGEM (mock com suporte a provider externo)
+app.post("/placa/reconhecer", upload.single('image'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'Imagem é obrigatória' });
+    }
+
+    // Permite envio de pista manual para testes/ambiente offline
+    if (req.body?.hint) {
+        const hint = sanitizePlate(req.body.hint);
+        if (hint) return res.json({ placa: hint, origem: 'hint' });
+    }
+
+    const providerUrl = process.env.ANPR_URL;
+    const providerKey = process.env.ANPR_API_KEY;
+
+    if (!providerUrl) {
+        return res.json({ placa: null, mensagem: 'Serviço de OCR não configurado no backend (defina ANPR_URL).' });
+    }
+
+    if (typeof FormData === 'undefined' || typeof Blob === 'undefined') {
+        return res.json({ placa: null, mensagem: 'Runtime sem suporte a FormData/Blob para ANPR. Use Node 18+ ou configure provider diferente.' });
+    }
+
+    try {
+        const form = new FormData();
+        form.append('image', new Blob([req.file.buffer]), req.file.originalname || 'captura.jpg');
+        if (providerKey) form.append('api_key', providerKey);
+
+        const resp = await fetch(providerUrl, {
+            method: 'POST',
+            body: form,
+            signal: AbortSignal.timeout(8000)
+        });
+
+        if (!resp.ok) {
+            console.warn('[BACK] Provider ANPR falhou:', resp.status);
+            return res.json({ placa: null, mensagem: 'Provider ANPR indisponível.' });
+        }
+
+        const data = await resp.json().catch(() => ({}));
+        const placa = sanitizePlate(data?.placa || data?.plate || data?.results?.[0]?.plate);
+        if (placa) return res.json({ placa, origem: 'provider' });
+
+        return res.json({ placa: null, mensagem: 'Placa não reconhecida.' });
+    } catch (err) {
+        console.error('[BACK] Erro no reconhecimento de placa:', err);
+        return res.json({ placa: null, mensagem: 'Erro ao processar a imagem.' });
+    }
+});
+
 // ROTA PARA REGISTRAR ENTRADA DE VEÍCULO
 app.post("/entrada", (req, res) => {
-    let { placa, marca, modelo, cor } = req.body;
+    let { placa, marca, modelo, cor, entryId } = req.body;
     
     if (!placa) {
         return res.status(400).json({ error: "Placa é obrigatória" });
@@ -178,6 +254,7 @@ app.post("/entrada", (req, res) => {
     
     // Normaliza placa para maiúsculas
     placa = sanitizePlate(placa);
+    const entry_id = entryId || `ent-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
     // Verifica capacidade disponível
     db.get(`SELECT valor FROM configuracoes WHERE chave = 'total_vagas'`, [], (err, config) => {
@@ -209,17 +286,21 @@ app.post("/entrada", (req, res) => {
             const hora_entrada = now.toLocaleTimeString('pt-BR');
 
             db.run(
-                `INSERT INTO historico (placa, marca, modelo, cor, data_entrada, hora_entrada, status)
-                 VALUES (?, ?, ?, ?, ?, ?, 'ativo')`,
-                [placa, marca || '', modelo || '', cor || '', data_entrada, hora_entrada],
+                `INSERT INTO historico (entry_id, placa, marca, modelo, cor, data_entrada, hora_entrada, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'ativo')`,
+                [entry_id, placa, marca || '', modelo || '', cor || '', data_entrada, hora_entrada],
                 function(err) {
                     if (err) {
+                        if (String(err?.message || '').includes('UNIQUE constraint failed: historico.entry_id')) {
+                            return res.status(409).json({ error: 'ID de entrada já existe' });
+                        }
                         console.error("[BACK] Erro ao registrar entrada:", err);
                         return res.status(500).json({ error: "Erro ao registrar entrada" });
                     }
                     res.json({ 
                         success: true, 
                         id: this.lastID,
+                        entry_id,
                         mensagem: "Entrada registrada com sucesso"
                     });
                 }
@@ -230,50 +311,90 @@ app.post("/entrada", (req, res) => {
 
 // ROTA PARA REGISTRAR SAÍDA DE VEÍCULO
 app.post("/saida", (req, res) => {
-    let { placa, valor_pago, tempo_permanencia, forma_pagamento } = req.body;
+    let { placa, valor_pago, tempo_permanencia, forma_pagamento, entryId } = req.body;
     
-    if (!placa) {
-        return res.status(400).json({ error: "Placa é obrigatória" });
+    if (!placa && !entryId) {
+        return res.status(400).json({ error: "Placa ou entryId é obrigatório" });
     }
     
     if (!forma_pagamento && valor_pago > 0) {
         return res.status(400).json({ error: "Forma de pagamento é obrigatória quando há valor a pagar" });
     }
     
-    // Normaliza placa para maiúsculas
-    placa = sanitizePlate(placa);
+    const placaNorm = placa ? sanitizePlate(placa) : null;
+    const entry_id = entryId || null;
 
     const now = new Date();
     const data_saida = now.toLocaleDateString('pt-BR');
     const hora_saida = now.toLocaleTimeString('pt-BR');
     
-    console.log(`[BACK] Registrando saída - Placa: ${placa}, Valor: ${valor_pago}, Tempo: ${tempo_permanencia}, Forma: ${forma_pagamento}`);
+    console.log(`[BACK] Registrando saída - entryId: ${entry_id || '-'} Placa: ${placaNorm || '-'}, Valor: ${valor_pago}, Tempo: ${tempo_permanencia}, Forma: ${forma_pagamento}`);
 
-    db.run(
-        `UPDATE historico 
-         SET data_saida = ?, hora_saida = ?, valor_pago = ?, tempo_permanencia = ?, forma_pagamento = ?, status = 'saído'
-         WHERE placa = ? AND status = 'ativo'`,
-        [data_saida, hora_saida, valor_pago || 0, tempo_permanencia || '', forma_pagamento || null, placa],
-        function(err) {
+    const paramsBase = [data_saida, hora_saida, valor_pago || 0, tempo_permanencia || '', forma_pagamento || null];
+
+    const tryUpdate = (whereClause, whereValue, onDone) => {
+        db.run(
+            `UPDATE historico 
+             SET data_saida = ?, hora_saida = ?, valor_pago = ?, tempo_permanencia = ?, forma_pagamento = ?, status = 'saído'
+             WHERE status = 'ativo' AND ${whereClause}`,
+            [...paramsBase, whereValue],
+            function(err) {
+                onDone(err, this.changes);
+            }
+        );
+    };
+
+    const finalize = (targetPlaca) => {
+        return res.json({ 
+            success: true,
+            mensagem: "Saída registrada com sucesso",
+            placa: targetPlaca || placaNorm,
+            entry_id: entry_id,
+            data_saida: data_saida,
+            hora_saida: hora_saida,
+            valor_pago: valor_pago
+        });
+    };
+
+    if (entry_id) {
+        tryUpdate('entry_id = ?', entry_id, (err, changes) => {
             if (err) {
                 console.error("[BACK] Erro ao registrar saída:", err);
                 return res.status(500).json({ error: "Erro ao registrar saída" });
             }
-            if (this.changes === 0) {
-                console.warn(`[BACK] Veículo não encontrado: ${placa}`);
+            if (changes === 0 && placaNorm) {
+                // Fallback pela placa se entryId não encontrar
+                tryUpdate('placa = ?', placaNorm, (err2, changes2) => {
+                    if (err2) {
+                        console.error("[BACK] Erro ao registrar saída (fallback placa):", err2);
+                        return res.status(500).json({ error: "Erro ao registrar saída" });
+                    }
+                    if (changes2 === 0) {
+                        console.warn(`[BACK] Veículo não encontrado (entryId/placa): ${entry_id}/${placaNorm}`);
+                        return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
+                    }
+                    finalize(placaNorm);
+                });
+            } else if (changes === 0) {
+                console.warn(`[BACK] Veículo não encontrado para entryId: ${entry_id}`);
+                return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
+            } else {
+                finalize(placaNorm);
+            }
+        });
+    } else {
+        tryUpdate('placa = ?', placaNorm, (err, changes) => {
+            if (err) {
+                console.error("[BACK] Erro ao registrar saída:", err);
+                return res.status(500).json({ error: "Erro ao registrar saída" });
+            }
+            if (changes === 0) {
+                console.warn(`[BACK] Veículo não encontrado: ${placaNorm}`);
                 return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
             }
-            console.log(`[BACK] Saída registrada com sucesso - Placa: ${placa}, Alterações: ${this.changes}`);
-            res.json({ 
-                success: true,
-                mensagem: "Saída registrada com sucesso",
-                placa: placa,
-                data_saida: data_saida,
-                hora_saida: hora_saida,
-                valor_pago: valor_pago
-            });
-        }
-    );
+            finalize(placaNorm);
+        });
+    }
 });
 
 // ROTA PARA OBTER HISTÓRICO COMPLETO
