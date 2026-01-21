@@ -52,23 +52,24 @@ function calcularValoresPermanencia(horaEntradaISO, horaSaida = new Date()) {
     const horaEntrada = new Date(horaEntradaISO);
     const ms = diffMs(horaEntrada, horaSaida);
     const tempoFormatado = formatDuration(ms);
-    const totalMin = Math.floor(ms / 60000);
+    const totalMinCeil = Math.ceil(ms / 60000);
 
     const valorHora = parseFloat(localStorage.getItem('valorHora')) || 0;
     const valorHoraAd = parseFloat(localStorage.getItem('valorHoraAdicional')) || 0;
     const tolerancia = parseInt(localStorage.getItem('toleranciaHoraAdicional')) || 0;
+    const toleranciaMs = tolerancia * 60000;
 
     let total = 0;
-    if (totalMin <= tolerancia) {
+    if (ms <= toleranciaMs) {
         total = 0;
-    } else if (totalMin <= 60) {
+    } else if (totalMinCeil <= 60) {
         total = valorHora;
     } else {
-        const exced = totalMin - 60;
+        const exced = totalMinCeil - 60;
         total = valorHora + Math.ceil(exced/60) * valorHoraAd;
     }
 
-    return { tempoFormatado, total, horaEntrada, horaSaida, totalMin };
+    return { tempoFormatado, total, horaEntrada, horaSaida, totalMin: totalMinCeil };
 }
 
 ///////////////////////////
@@ -136,7 +137,12 @@ const autoFillVehicleDataAPI = debounce(async function() {
         return;
     }
 
-    // Se a API encontrou dados, preenche
+    const shouldNotify = info.mensagem && (!info.encontrado || info.origem === 'cache');
+    if (shouldNotify) {
+        alert(info.mensagem);
+    }
+
+    // Se a API (ou cache) trouxe dados, preenche
     if (info.encontrado || info.marca || info.modelo || info.cor) {
         document.getElementById('marcaEntrada').value = info.marca || "";
         document.getElementById('modeloEntrada').value = info.modelo || "";
@@ -464,6 +470,13 @@ function registrarEntrada() {
 
     if (!isValidPlaca(placa)) { alert('Placa inválida. Use formato AAA1234 ou AAA1A23.'); return; }
     if (!placa || !marca || !modelo) { alert('Placa, marca e modelo são obrigatórios.'); return; }
+
+    const existingEntry = StorageService.getEntryByPlate(placa);
+    if (existingEntry) {
+        const entradaAnterior = new Date(existingEntry.horaEntrada).toLocaleString();
+        alert(`Este veículo já está no pátio desde ${entradaAnterior}. Não é possível registrar novamente.`);
+        return;
+    }
 
     const entrada = { entryId: StorageService.generateEntryId(), placa, marca, modelo, cor, horaEntrada: new Date().toISOString() };
 

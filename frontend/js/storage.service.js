@@ -36,11 +36,25 @@
     }
 
     function saveEntry(entry) {
-        const entries = loadEntries().filter(e => e.entryId !== entry.entryId && e.placa !== entry.placa);
-        entries.push(entry);
+        const normalizedEntry = { ...entry, placa: normalizePlaca(entry.placa) };
+        const entries = loadEntries();
+        const existingByPlate = entries.find(e => e.placa === normalizedEntry.placa && e.entryId !== normalizedEntry.entryId);
+        const existingIndexById = entries.findIndex(e => e.entryId === normalizedEntry.entryId);
+
+        // Não sobrescreve se já existe veículo com a mesma placa ativo
+        if (existingByPlate) {
+            return existingByPlate;
+        }
+
+        if (existingIndexById >= 0) {
+            entries[existingIndexById] = normalizedEntry;
+        } else {
+            entries.push(normalizedEntry);
+        }
+
         persist(entries);
-        mirrorLegacy(entry);
-        return entry;
+        mirrorLegacy(normalizedEntry);
+        return normalizedEntry;
     }
 
     function removeEntry(entryId) {

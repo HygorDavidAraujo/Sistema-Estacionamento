@@ -120,6 +120,23 @@ function sanitizePlate(p) {
     return String(p).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 }
 
+function getLastVehicleData(placa) {
+    return new Promise((resolve) => {
+        db.get(
+            `SELECT marca, modelo, cor FROM historico WHERE placa = ? ORDER BY criado_em DESC LIMIT 1`,
+            [placa],
+            (err, row) => {
+                if (err) {
+                    console.error('[BACK] Erro ao buscar cache de placa:', err);
+                    return resolve(null);
+                }
+                if (!row) return resolve(null);
+                resolve(row);
+            }
+        );
+    });
+}
+
 // ROTA PARA CONSULTAR A PLACA (API gratuita)
 app.get("/placa/:placa", async (req, res) => {
     const placa = sanitizePlate(req.params.placa);
@@ -129,25 +146,33 @@ app.get("/placa/:placa", async (req, res) => {
         return res.status(400).json({ error: "Placa inválida", encontrado: false });
     }
 
+    const cache = await getLastVehicleData(placa);
+    const respondWithCache = (mensagem) => res.json({
+        encontrado: false,
+        marca: cache?.marca || "",
+        modelo: cache?.modelo || "",
+        cor: cache?.cor || "",
+        origem: cache ? 'cache' : 'api',
+        mensagem: mensagem || "API indisponível. Preencha manualmente."
+    });
+
     try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4500);
+
         const url = `${FREE_API}/${encodeURIComponent(placa)}.json`;
         console.log('[BACK] URL Dados:', url);
 
         const resp = await fetch(url, { 
             method: 'GET',
-            headers: { 'User-Agent': 'Mozilla/5.0' }
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            signal: controller.signal
         });
+        clearTimeout(timeout);
 
         if (!resp.ok) {
             console.warn('[BACK] API retornou status:', resp.status);
-            // Retorna resposta vazia mas válida para permitir entrada manual
-            return res.json({
-                encontrado: false,
-                marca: "",
-                modelo: "",
-                cor: "",
-                mensagem: "API indisponível. Preencha manualmente."
-            });
+            return respondWithCache("API indisponível. Preencha manualmente.");
         }
 
         const data = await resp.json();
@@ -155,13 +180,7 @@ app.get("/placa/:placa", async (req, res) => {
         // Alguns retornos podem indicar erro na própria resposta
         if (data?.codigoRetorno && data.codigoRetorno !== "0") {
             console.warn('[BACK] API retornou código de erro:', data.codigoRetorno);
-            return res.json({
-                encontrado: false,
-                marca: "",
-                modelo: "",
-                cor: "",
-                mensagem: "Placa não encontrada. Preencha manualmente."
-            });
+            return respondWithCache("Placa não encontrada. Preencha manualmente.");
         }
 
         const marca = data?.marca || "";
@@ -169,32 +188,20 @@ app.get("/placa/:placa", async (req, res) => {
         const cor = data?.cor || "";
 
         if (!marca && !modelo) {
-            return res.json({
-                encontrado: false,
-                marca: "",
-                modelo: "",
-                cor: "",
-                mensagem: "Dados não encontrados. Preencha manualmente."
-            });
+            return respondWithCache("Dados não encontrados. Preencha manualmente.");
         }
 
         return res.json({
             encontrado: true,
             marca,
             modelo,
-            cor
+            cor,
+            origem: 'api'
         });
 
     } catch (error) {
         console.error("[BACK] ERRO AO CONSULTAR:", error);
-        // Retorna resposta válida mesmo com erro para não bloquear o sistema
-        return res.json({
-            encontrado: false,
-            marca: "",
-            modelo: "",
-            cor: "",
-            mensagem: "Erro na API. Preencha manualmente."
-        });
+        return respondWithCache("Erro na API. Preencha manualmente.");
     }
 });
 

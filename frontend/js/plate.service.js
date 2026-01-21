@@ -31,7 +31,9 @@
                 encontrado: data.encontrado !== false,
                 marca: data.marca || '',
                 modelo: data.modelo || '',
-                cor: data.cor || ''
+                cor: data.cor || '',
+                mensagem: data.mensagem || '',
+                origem: data.origem || 'api'
             };
         } catch (err) {
             console.warn('[plate.service] Erro ao consultar placa:', err.message);
