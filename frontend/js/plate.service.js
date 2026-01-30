@@ -1,9 +1,11 @@
 (function() {
     const normalizePlaca = (p) => (p || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:';
+    const defaultBase = window.BACKEND_BASE || (isLocal ? 'http://localhost:3000' : `${location.origin}/api`);
 
     async function recognizePlateFromImage(imageBlob) {
         if (!imageBlob) return null;
-        const baseUrl = window.BACKEND_BASE || 'http://localhost:3000';
+        const baseUrl = window.BACKEND_BASE || defaultBase;
         const endpoint = `${baseUrl}/placa/reconhecer`;
         try {
             const formData = new FormData();
@@ -21,7 +23,7 @@
     async function lookupPlateAPI(placa) {
         const normalized = normalizePlaca(placa);
         if (!normalized) return null;
-        const baseUrl = window.BACKEND_BASE || 'http://localhost:3000';
+        const baseUrl = window.BACKEND_BASE || defaultBase;
         try {
             const res = await fetch(`${baseUrl}/placa/${normalized}`, { method: 'GET', signal: AbortSignal.timeout(5000) });
             if (!res.ok) return null;

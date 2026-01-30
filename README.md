@@ -7,15 +7,16 @@ Sistema completo para gerenciamento de estacionamento com consulta de veículos 
 - **Consulta de Veículos**: Integração com API gratuita para buscar marca, modelo e cor por placa
 - **Controle de Entrada/Saída**: Registro completo com horários e cálculo automático de permanência
 - **Histórico Completo**: Filtros por dia, mês, ano e placa
-- **Banco de Dados SQLite**: Armazenamento persistente de todas as operações
+- **Banco de Dados Postgres (Neon)**: Armazenamento persistente de todas as operações
 - **Configurações Persistentes**: Valores de hora inicial, adicional e tolerância armazenados no banco
 - **Validação de Placas**: Suporte para formato Mercosul (AAA1A23) e antigo (AAA1234)
 - **Cálculo Automático**: Valor devido atualizado a cada 10 segundos
 
 ## 📋 Pré-requisitos
 
-- Node.js (versão 14 ou superior)
+- Node.js (versão 18 ou superior)
 - npm ou yarn
+- Postgres (local ou Neon)
 
 ## 🔧 Instalação
 
@@ -33,7 +34,9 @@ npm install
 
 ## ▶️ Como Executar
 
-1. Inicie o servidor backend
+1. Configure a variável `DATABASE_URL` apontando para o Postgres
+
+2. Inicie o servidor backend
 ```bash
 cd backend
 node server.js
@@ -49,8 +52,9 @@ O servidor rodará na porta 3000 (ou próxima disponível 3001-3005)
 Sistema Estacionamento/
 ├── backend/
 │   ├── server.js           # Servidor Express com rotas da API
-│   ├── package.json        # Dependências do backend
-│   └── estacionamento.db   # Banco de dados SQLite (gerado automaticamente)
+│   ├── db.js               # Conexão com Postgres + bootstrap do schema
+│   ├── schema.sql          # Schema Postgres (tabelas + seeds)
+│   └── package.json        # Dependências do backend
 ├── frontend/
 │   ├── script.js          # Lógica do cliente
 │   └── style.css          # Estilos da aplicação
@@ -63,7 +67,7 @@ Sistema Estacionamento/
 
 ### Backend
 - **Node.js** com **Express.js**
-- **SQLite3** para banco de dados
+- **Postgres** (Neon) via **pg**
 - **node-fetch** para integração com API externa
 - **CORS** para permitir requisições cross-origin
 
@@ -100,10 +104,10 @@ Sistema Estacionamento/
 - `marca` - Marca do veículo
 - `modelo` - Modelo do veículo
 - `cor` - Cor do veículo
-- `data_entrada` - Data de entrada (DD/MM/YYYY)
-- `hora_entrada` - Hora de entrada (HH:MM:SS)
-- `data_saida` - Data de saída (DD/MM/YYYY)
-- `hora_saida` - Hora de saída (HH:MM:SS)
+- `data_entrada` - Data de entrada (DATE)
+- `hora_entrada` - Hora de entrada (TIME)
+- `data_saida` - Data de saída (DATE)
+- `hora_saida` - Hora de saída (TIME)
 - `tempo_permanencia` - Tempo total no formato legível
 - `valor_pago` - Valor pago pelo cliente
 - `status` - "ativo" ou "saído"
@@ -143,9 +147,19 @@ Este projeto é de código aberto para fins educacionais.
 
 Desenvolvido para gerenciamento eficiente de estacionamentos.
 
+## 🚀 Deploy (Vercel + Neon)
+
+1) Crie um banco no Neon e copie a `DATABASE_URL`.
+2) Aplique o schema no Neon usando o arquivo `backend/schema.sql`.
+3) No projeto do backend no Vercel, configure as variáveis:
+	- `DATABASE_URL`
+	- `PGSSLMODE=require`
+	- (opcional) `ANPR_URL`, `ANPR_API_KEY`, `ANPR_FAKE_PLATE`
+4) Suba o repositório no Vercel. O frontend é estático e o backend é servido em `/api`.
+
 ## 🐛 Problemas Conhecidos
 
-Se o banco de dados apresentar erros, delete o arquivo `backend/estacionamento.db` e reinicie o servidor. Ele será recriado automaticamente.
+Se o banco de dados apresentar erros, confira a `DATABASE_URL` e o acesso ao Neon.
 
 ## 🤝 Contribuindo
 

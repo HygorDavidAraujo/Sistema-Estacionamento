@@ -1,5 +1,6 @@
 // Configuração: endereço do backend
-let BACKEND_BASE = 'http://localhost:3000';
+const IS_LOCAL_ENV = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:';
+let BACKEND_BASE = window.BACKEND_BASE || (IS_LOCAL_ENV ? 'http://localhost:3000' : `${location.origin}/api`);
 
 async function detectBackendPort(startPort = 3000, maxPort = 3005) {
     for (let port = startPort; port <= maxPort; port++) {
@@ -21,7 +22,10 @@ async function detectBackendPort(startPort = 3000, maxPort = 3005) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-    BACKEND_BASE = await detectBackendPort();
+    if (IS_LOCAL_ENV) {
+        BACKEND_BASE = await detectBackendPort();
+    }
+    window.BACKEND_BASE = BACKEND_BASE;
     StorageService.migrateLegacyEntries?.();
     bindUI();
     await loadConfig(); // Aguarda carregamento das configurações do banco

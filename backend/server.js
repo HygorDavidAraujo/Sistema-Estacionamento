@@ -1,7 +1,7 @@
 import express from "express";
 import fetch from "node-fetch";
 import cors from "cors";
-import sqlite3 from "sqlite3";
+import { initDb, query } from "./db.js";
 import multer from "multer";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
@@ -12,129 +12,50 @@ const __dirname = dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use((req, _res, next) => {
+    if (req.url.startsWith('/api/')) {
+        req.url = req.url.replace(/^\/api(?=\/|$)/, '') || '/';
+    }
+    next();
+});
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
 
-// Banco de dados SQLite
-const db = new sqlite3.Database(`${__dirname}/estacionamento.db`, (err) => {
-    if (err) console.error("[BACK] Erro ao abrir DB:", err);
-    else console.log("[BACK] Banco de dados conectado");
-});
-
-// Criar tabelas se não existirem
-db.serialize(() => {
-    // Tabela histórico
-    db.run(`
-        CREATE TABLE IF NOT EXISTS historico (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entry_id TEXT,
-            placa TEXT NOT NULL,
-            marca TEXT,
-            modelo TEXT,
-            cor TEXT,
-            data_entrada TEXT NOT NULL,
-            hora_entrada TEXT NOT NULL,
-            data_saida TEXT,
-            hora_saida TEXT,
-            tempo_permanencia TEXT,
-            valor_pago REAL,
-            forma_pagamento TEXT,
-            status TEXT DEFAULT 'ativo',
-            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `, (err) => {
-        if (err) console.error('[BACK] Erro ao criar tabela historico:', err);
-        else console.log('[BACK] Tabela historico pronta');
-    });
-
-    // Tabela configurações
-    db.run(`
-        CREATE TABLE IF NOT EXISTS configuracoes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chave TEXT UNIQUE NOT NULL,
-            valor TEXT NOT NULL,
-            descricao TEXT,
-            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `, (err) => {
-        if (err) {
-            console.error('[BACK] Erro ao criar tabela configuracoes:', err);
-            return;
-        }
-        
-        console.log('[BACK] Tabela configuracoes pronta');
-        
-        // Inserir configurações padrão se não existirem (dentro do callback)
-        const configuracoesDefault = [
-            { chave: 'valor_hora_inicial', valor: '5.00', descricao: 'Valor da primeira hora (R$)' },
-            { chave: 'valor_hora_adicional', valor: '2.50', descricao: 'Valor por hora adicional (R$)' },
-            { chave: 'tempo_tolerancia', valor: '15', descricao: 'Tempo de tolerância em minutos' },
-            { chave: 'total_vagas', valor: '50', descricao: 'Número total de vagas do estacionamento' }
-        ];
-
-        configuracoesDefault.forEach(config => {
-            db.run(
-                `INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)`,
-                [config.chave, config.valor, config.descricao],
-                (err) => {
-                    if (err) console.error(`[BACK] Erro ao inserir config ${config.chave}:`, err);
-                    else console.log(`[BACK] Config ${config.chave} inicializada`);
-                }
-            );
-        });
-    });
+const dbReady = initDb().catch((err) => {
+    console.error("[BACK] Falha ao inicializar schema:", err);
 });
 
 // API gratuita (sem credencial) para consulta de placa
 // Fonte: apicarros.com - retorna marca, modelo, cor, etc.
 const FREE_API = 'https://apicarros.com/v1/consulta';
 
-// Garante que a coluna entry_id exista (migração leve)
-function ensureEntryIdColumn() {
-    db.all(`PRAGMA table_info(historico)`, (err, rows) => {
-        if (err) {
-            console.error('[BACK] Erro ao inspecionar tabela historico:', err);
-            return;
-        }
-        const hasEntryId = rows.some(r => r.name === 'entry_id');
-        const createIndex = () => db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_historico_entry_id ON historico(entry_id)`);
-
-        if (!hasEntryId) {
-            db.run(`ALTER TABLE historico ADD COLUMN entry_id TEXT`, (alterErr) => {
-                if (alterErr) {
-                    console.error('[BACK] Erro ao adicionar entry_id:', alterErr);
-                    return;
-                }
-                console.log('[BACK] Coluna entry_id adicionada');
-                createIndex();
-            });
-        } else {
-            createIndex();
-        }
-    });
+function pad2(n) {
+    return String(n).padStart(2, "0");
 }
 
-ensureEntryIdColumn();
+function formatDateLocal(date) {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function formatTimeLocal(date) {
+    return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
 
 function sanitizePlate(p) {
     if (!p) return '';
     return String(p).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 }
 
-function getLastVehicleData(placa) {
-    return new Promise((resolve) => {
-        db.get(
-            `SELECT marca, modelo, cor FROM historico WHERE placa = ? ORDER BY criado_em DESC LIMIT 1`,
-            [placa],
-            (err, row) => {
-                if (err) {
-                    console.error('[BACK] Erro ao buscar cache de placa:', err);
-                    return resolve(null);
-                }
-                if (!row) return resolve(null);
-                resolve(row);
-            }
+async function getLastVehicleData(placa) {
+    try {
+        const result = await query(
+            `SELECT marca, modelo, cor FROM historico WHERE placa = $1 ORDER BY criado_em DESC LIMIT 1`,
+            [placa]
         );
-    });
+        return result.rows?.[0] || null;
+    } catch (err) {
+        console.error('[BACK] Erro ao buscar cache de placa:', err);
+        return null;
+    }
 }
 
 // ROTA PARA CONSULTAR A PLACA (API gratuita)
@@ -146,6 +67,7 @@ app.get("/placa/:placa", async (req, res) => {
         return res.status(400).json({ error: "Placa inválida", encontrado: false });
     }
 
+    await dbReady;
     const cache = await getLastVehicleData(placa);
     const respondWithCache = (mensagem) => res.json({
         encontrado: false,
@@ -264,7 +186,7 @@ app.post("/placa/reconhecer", upload.single('image'), async (req, res) => {
 });
 
 // ROTA PARA REGISTRAR ENTRADA DE VEÍCULO
-app.post("/entrada", (req, res) => {
+app.post("/entrada", async (req, res) => {
     let { placa, marca, modelo, cor, entryId } = req.body;
     
     if (!placa) {
@@ -275,61 +197,58 @@ app.post("/entrada", (req, res) => {
     placa = sanitizePlate(placa);
     const entry_id = entryId || `ent-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
-    // Verifica capacidade disponível
-    db.get(`SELECT valor FROM configuracoes WHERE chave = 'total_vagas'`, [], (err, config) => {
-        if (err) {
-            console.error("[BACK] Erro ao consultar total de vagas:", err);
-            return res.status(500).json({ error: "Erro ao verificar capacidade" });
+    try {
+        await dbReady;
+
+        // Verifica capacidade disponível
+        const configResult = await query(
+            `SELECT valor FROM configuracoes WHERE chave = $1`,
+            ['total_vagas']
+        );
+        const totalVagas = parseInt(configResult.rows?.[0]?.valor || 0, 10);
+
+        const ocupadasResult = await query(
+            `SELECT COUNT(*)::int as ocupadas FROM historico WHERE status = 'ativo'`,
+            []
+        );
+        const ocupadas = ocupadasResult.rows?.[0]?.ocupadas || 0;
+
+        if (ocupadas >= totalVagas) {
+            return res.status(400).json({ 
+                error: "Estacionamento lotado",
+                mensagem: `Capacidade máxima atingida (${totalVagas} vagas)`
+            });
         }
 
-        const totalVagas = parseInt(config?.valor || 0);
+        // Procede com a entrada
+        const now = new Date();
+        const data_entrada = formatDateLocal(now);
+        const hora_entrada = formatTimeLocal(now);
 
-        db.get(`SELECT COUNT(*) as ocupadas FROM historico WHERE status = 'ativo'`, [], (err, result) => {
-            if (err) {
-                console.error("[BACK] Erro ao contar vagas ocupadas:", err);
-                return res.status(500).json({ error: "Erro ao verificar ocupação" });
-            }
+        const insertResult = await query(
+            `INSERT INTO historico (entry_id, placa, marca, modelo, cor, data_entrada, hora_entrada, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'ativo')
+             RETURNING id`,
+            [entry_id, placa, marca || '', modelo || '', cor || '', data_entrada, hora_entrada]
+        );
 
-            const ocupadas = result.ocupadas || 0;
-
-            if (ocupadas >= totalVagas) {
-                return res.status(400).json({ 
-                    error: "Estacionamento lotado",
-                    mensagem: `Capacidade máxima atingida (${totalVagas} vagas)`
-                });
-            }
-
-            // Procede com a entrada
-            const now = new Date();
-            const data_entrada = now.toLocaleDateString('pt-BR');
-            const hora_entrada = now.toLocaleTimeString('pt-BR');
-
-            db.run(
-                `INSERT INTO historico (entry_id, placa, marca, modelo, cor, data_entrada, hora_entrada, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 'ativo')`,
-                [entry_id, placa, marca || '', modelo || '', cor || '', data_entrada, hora_entrada],
-                function(err) {
-                    if (err) {
-                        if (String(err?.message || '').includes('UNIQUE constraint failed: historico.entry_id')) {
-                            return res.status(409).json({ error: 'ID de entrada já existe' });
-                        }
-                        console.error("[BACK] Erro ao registrar entrada:", err);
-                        return res.status(500).json({ error: "Erro ao registrar entrada" });
-                    }
-                    res.json({ 
-                        success: true, 
-                        id: this.lastID,
-                        entry_id,
-                        mensagem: "Entrada registrada com sucesso"
-                    });
-                }
-            );
+        res.json({ 
+            success: true, 
+            id: insertResult.rows?.[0]?.id,
+            entry_id,
+            mensagem: "Entrada registrada com sucesso"
         });
-    });
+    } catch (err) {
+        if (err?.code === '23505') {
+            return res.status(409).json({ error: 'ID de entrada já existe' });
+        }
+        console.error("[BACK] Erro ao registrar entrada:", err);
+        return res.status(500).json({ error: "Erro ao registrar entrada" });
+    }
 });
 
 // ROTA PARA REGISTRAR SAÍDA DE VEÍCULO
-app.post("/saida", (req, res) => {
+app.post("/saida", async (req, res) => {
     let { placa, valor_pago, tempo_permanencia, forma_pagamento, entryId } = req.body;
     
     if (!placa && !entryId) {
@@ -344,23 +263,22 @@ app.post("/saida", (req, res) => {
     const entry_id = entryId || null;
 
     const now = new Date();
-    const data_saida = now.toLocaleDateString('pt-BR');
-    const hora_saida = now.toLocaleTimeString('pt-BR');
+    const data_saida = formatDateLocal(now);
+    const hora_saida = formatTimeLocal(now);
     
     console.log(`[BACK] Registrando saída - entryId: ${entry_id || '-'} Placa: ${placaNorm || '-'}, Valor: ${valor_pago}, Tempo: ${tempo_permanencia}, Forma: ${forma_pagamento}`);
 
     const paramsBase = [data_saida, hora_saida, valor_pago || 0, tempo_permanencia || '', forma_pagamento || null];
 
-    const tryUpdate = (whereClause, whereValue, onDone) => {
-        db.run(
+    const tryUpdate = async (whereClause, whereValue) => {
+        const result = await query(
             `UPDATE historico 
-             SET data_saida = ?, hora_saida = ?, valor_pago = ?, tempo_permanencia = ?, forma_pagamento = ?, status = 'saído'
-             WHERE status = 'ativo' AND ${whereClause}`,
-            [...paramsBase, whereValue],
-            function(err) {
-                onDone(err, this.changes);
-            }
+             SET data_saida = $1, hora_saida = $2, valor_pago = $3, tempo_permanencia = $4, forma_pagamento = $5, status = 'saído'
+             WHERE status = 'ativo' AND ${whereClause}
+             RETURNING id`,
+            [...paramsBase, whereValue]
         );
+        return result.rowCount || 0;
     };
 
     const finalize = (targetPlaca) => {
@@ -375,162 +293,190 @@ app.post("/saida", (req, res) => {
         });
     };
 
-    if (entry_id) {
-        tryUpdate('entry_id = ?', entry_id, (err, changes) => {
-            if (err) {
-                console.error("[BACK] Erro ao registrar saída:", err);
-                return res.status(500).json({ error: "Erro ao registrar saída" });
-            }
+    try {
+        await dbReady;
+
+        if (entry_id) {
+            const changes = await tryUpdate('entry_id = $6', entry_id);
             if (changes === 0 && placaNorm) {
                 // Fallback pela placa se entryId não encontrar
-                tryUpdate('placa = ?', placaNorm, (err2, changes2) => {
-                    if (err2) {
-                        console.error("[BACK] Erro ao registrar saída (fallback placa):", err2);
-                        return res.status(500).json({ error: "Erro ao registrar saída" });
-                    }
-                    if (changes2 === 0) {
-                        console.warn(`[BACK] Veículo não encontrado (entryId/placa): ${entry_id}/${placaNorm}`);
-                        return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
-                    }
-                    finalize(placaNorm);
-                });
-            } else if (changes === 0) {
+                const changes2 = await tryUpdate('placa = $6', placaNorm);
+                if (changes2 === 0) {
+                    console.warn(`[BACK] Veículo não encontrado (entryId/placa): ${entry_id}/${placaNorm}`);
+                    return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
+                }
+                return finalize(placaNorm);
+            }
+
+            if (changes === 0) {
                 console.warn(`[BACK] Veículo não encontrado para entryId: ${entry_id}`);
                 return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
-            } else {
-                finalize(placaNorm);
             }
-        });
-    } else {
-        tryUpdate('placa = ?', placaNorm, (err, changes) => {
-            if (err) {
-                console.error("[BACK] Erro ao registrar saída:", err);
-                return res.status(500).json({ error: "Erro ao registrar saída" });
-            }
-            if (changes === 0) {
-                console.warn(`[BACK] Veículo não encontrado: ${placaNorm}`);
-                return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
-            }
-            finalize(placaNorm);
-        });
+            return finalize(placaNorm);
+        }
+
+        const changes = await tryUpdate('placa = $6', placaNorm);
+        if (changes === 0) {
+            console.warn(`[BACK] Veículo não encontrado: ${placaNorm}`);
+            return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
+        }
+        return finalize(placaNorm);
+    } catch (err) {
+        console.error("[BACK] Erro ao registrar saída:", err);
+        return res.status(500).json({ error: "Erro ao registrar saída" });
     }
 });
 
 // ROTA PARA OBTER HISTÓRICO COMPLETO
-app.get("/historico", (req, res) => {
+app.get("/historico", async (req, res) => {
     const { dataInicio, dataFim, dia, mes, ano } = req.query;
     
-    let query = `SELECT * FROM historico WHERE 1=1`;
+    let query = `
+        SELECT
+            id,
+            entry_id,
+            placa,
+            marca,
+            modelo,
+            cor,
+            TO_CHAR(data_entrada, 'DD/MM/YYYY') as data_entrada,
+            TO_CHAR(hora_entrada, 'HH24:MI:SS') as hora_entrada,
+            TO_CHAR(data_saida, 'DD/MM/YYYY') as data_saida,
+            TO_CHAR(hora_saida, 'HH24:MI:SS') as hora_saida,
+            tempo_permanencia,
+            valor_pago,
+            forma_pagamento,
+            status,
+            criado_em
+        FROM historico
+        WHERE 1=1`;
     let params = [];
     
     // Filtro por período (data início e fim)
     if (dataInicio && dataFim) {
-        query += ` AND data_entrada BETWEEN ? AND ?`;
+        query += ` AND data_entrada BETWEEN $1 AND $2`;
         params.push(dataInicio, dataFim);
     }
     // Filtro por dia, mês e ano
     else if (dia && mes && ano) {
-        query += ` AND substr(data_entrada, 1, 2) = ? AND substr(data_entrada, 4, 2) = ? AND substr(data_entrada, 7, 4) = ?`;
-        params.push(dia.padStart(2, '0'), mes.padStart(2, '0'), ano);
+        query += ` AND EXTRACT(DAY FROM data_entrada) = $1 AND EXTRACT(MONTH FROM data_entrada) = $2 AND EXTRACT(YEAR FROM data_entrada) = $3`;
+        params.push(parseInt(dia, 10), parseInt(mes, 10), parseInt(ano, 10));
     }
     // Filtro por mês e ano
     else if (mes && ano) {
-        query += ` AND substr(data_entrada, 4, 2) = ? AND substr(data_entrada, 7, 4) = ?`;
-        params.push(mes.padStart(2, '0'), ano);
+        query += ` AND EXTRACT(MONTH FROM data_entrada) = $1 AND EXTRACT(YEAR FROM data_entrada) = $2`;
+        params.push(parseInt(mes, 10), parseInt(ano, 10));
     }
     // Filtro apenas por ano
     else if (ano) {
-        query += ` AND substr(data_entrada, 7, 4) = ?`;
-        params.push(ano);
+        query += ` AND EXTRACT(YEAR FROM data_entrada) = $1`;
+        params.push(parseInt(ano, 10));
     }
     // Filtro apenas por dia (todos os meses/anos)
     else if (dia) {
-        query += ` AND substr(data_entrada, 1, 2) = ?`;
-        params.push(dia.padStart(2, '0'));
+        query += ` AND EXTRACT(DAY FROM data_entrada) = $1`;
+        params.push(parseInt(dia, 10));
     }
     
     query += ` ORDER BY criado_em DESC`;
     
-    db.all(query, params, (err, rows) => {
-        if (err) {
-            console.error("[BACK] Erro ao buscar histórico:", err);
-            return res.status(500).json({ error: "Erro ao buscar histórico" });
-        }
-        res.json({ success: true, dados: rows || [] });
-    });
+    try {
+        await dbReady;
+        const result = await query(query, params);
+        res.json({ success: true, dados: result.rows || [] });
+    } catch (err) {
+        console.error("[BACK] Erro ao buscar histórico:", err);
+        return res.status(500).json({ error: "Erro ao buscar histórico" });
+    }
 });
 
 // ROTA PARA OBTER HISTÓRICO FILTRADO POR PLACA
-app.get("/historico/:placa", (req, res) => {
+app.get("/historico/:placa", async (req, res) => {
     const placa = sanitizePlate(req.params.placa);
-    
-    db.all(
-        `SELECT * FROM historico WHERE placa = ? ORDER BY criado_em DESC`,
-        [placa],
-        (err, rows) => {
-            if (err) {
-                console.error("[BACK] Erro ao buscar histórico:", err);
-                return res.status(500).json({ error: "Erro ao buscar histórico" });
-            }
-            res.json({ success: true, dados: rows || [] });
-        }
-    );
+
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT
+                id,
+                entry_id,
+                placa,
+                marca,
+                modelo,
+                cor,
+                TO_CHAR(data_entrada, 'DD/MM/YYYY') as data_entrada,
+                TO_CHAR(hora_entrada, 'HH24:MI:SS') as hora_entrada,
+                TO_CHAR(data_saida, 'DD/MM/YYYY') as data_saida,
+                TO_CHAR(hora_saida, 'HH24:MI:SS') as hora_saida,
+                tempo_permanencia,
+                valor_pago,
+                forma_pagamento,
+                status,
+                criado_em
+             FROM historico WHERE placa = $1 ORDER BY criado_em DESC`,
+            [placa]
+        );
+        res.json({ success: true, dados: result.rows || [] });
+    } catch (err) {
+        console.error("[BACK] Erro ao buscar histórico:", err);
+        return res.status(500).json({ error: "Erro ao buscar histórico" });
+    }
 });
 
 // ROTA PARA OBTER RELATÓRIO RESUMIDO (ESTATÍSTICAS)
-app.get("/relatorio/resumo", (req, res) => {
-    db.all(
-        `SELECT 
-            COUNT(*) as total_movimentacoes,
-            COUNT(CASE WHEN status = 'saído' THEN 1 END) as total_saidas,
-            COUNT(CASE WHEN status = 'ativo' THEN 1 END) as veiculos_no_patio,
-            COALESCE(SUM(valor_pago), 0) as receita_total,
-            COALESCE(AVG(valor_pago), 0) as valor_medio,
-            COUNT(DISTINCT placa) as total_veiculos_unicos
-         FROM historico`,
-        [],
-        (err, rows) => {
-            if (err) {
-                console.error("[BACK] Erro ao gerar relatório:", err);
-                return res.status(500).json({ error: "Erro ao gerar relatório" });
-            }
-            res.json({ success: true, dados: rows[0] || {} });
-        }
-    );
+app.get("/relatorio/resumo", async (req, res) => {
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT 
+                COUNT(*) as total_movimentacoes,
+                COUNT(CASE WHEN status = 'saído' THEN 1 END) as total_saidas,
+                COUNT(CASE WHEN status = 'ativo' THEN 1 END) as veiculos_no_patio,
+                COALESCE(SUM(valor_pago), 0) as receita_total,
+                COALESCE(AVG(valor_pago), 0) as valor_medio,
+                COUNT(DISTINCT placa) as total_veiculos_unicos
+             FROM historico`,
+            []
+        );
+        res.json({ success: true, dados: result.rows?.[0] || {} });
+    } catch (err) {
+        console.error("[BACK] Erro ao gerar relatório:", err);
+        return res.status(500).json({ error: "Erro ao gerar relatório" });
+    }
 });
 
 // ROTA PARA OBTER DASHBOARD DE CAIXA
-app.get("/caixa/dashboard", (req, res) => {
-    const hoje = new Date().toLocaleDateString('pt-BR');
+app.get("/caixa/dashboard", async (req, res) => {
+    const hoje = formatDateLocal(new Date());
     
-    db.get(
-        `SELECT 
-            COALESCE(SUM(valor_pago), 0) as total_recebido,
-            COALESCE(SUM(CASE WHEN forma_pagamento = 'Dinheiro' THEN valor_pago ELSE 0 END), 0) as total_dinheiro,
-            COALESCE(SUM(CASE WHEN forma_pagamento = 'Cartão de Crédito' THEN valor_pago ELSE 0 END), 0) as total_credito,
-            COALESCE(SUM(CASE WHEN forma_pagamento = 'Cartão de Débito' THEN valor_pago ELSE 0 END), 0) as total_debito,
-            COALESCE(SUM(CASE WHEN forma_pagamento = 'Pix' THEN valor_pago ELSE 0 END), 0) as total_pix,
-            COUNT(CASE WHEN valor_pago > 0 THEN 1 END) as total_transacoes
-         FROM historico 
-         WHERE status = 'saído' AND data_saida = ?`,
-        [hoje],
-        (err, row) => {
-            if (err) {
-                console.error("[BACK] Erro ao gerar dashboard de caixa:", err);
-                return res.status(500).json({ error: "Erro ao gerar dashboard de caixa" });
-            }
-            res.json({ success: true, dados: row || {} });
-        }
-    );
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT 
+                COALESCE(SUM(valor_pago), 0) as total_recebido,
+                COALESCE(SUM(CASE WHEN forma_pagamento = 'Dinheiro' THEN valor_pago ELSE 0 END), 0) as total_dinheiro,
+                COALESCE(SUM(CASE WHEN forma_pagamento = 'Cartão de Crédito' THEN valor_pago ELSE 0 END), 0) as total_credito,
+                COALESCE(SUM(CASE WHEN forma_pagamento = 'Cartão de Débito' THEN valor_pago ELSE 0 END), 0) as total_debito,
+                COALESCE(SUM(CASE WHEN forma_pagamento = 'Pix' THEN valor_pago ELSE 0 END), 0) as total_pix,
+                COUNT(CASE WHEN valor_pago > 0 THEN 1 END) as total_transacoes
+             FROM historico 
+             WHERE status = 'saído' AND data_saida = $1`,
+            [hoje]
+        );
+        res.json({ success: true, dados: result.rows?.[0] || {} });
+    } catch (err) {
+        console.error("[BACK] Erro ao gerar dashboard de caixa:", err);
+        return res.status(500).json({ error: "Erro ao gerar dashboard de caixa" });
+    }
 });
 
 // ROTA PARA RELATÓRIO DE CAIXA POR PERÍODO
-app.get("/caixa/relatorio", (req, res) => {
+app.get("/caixa/relatorio", async (req, res) => {
     const { dataInicio, dataFim } = req.query;
     
     let query = `
         SELECT 
-            data_saida,
+            TO_CHAR(data_saida, 'DD/MM/YYYY') as data_saida,
             forma_pagamento,
             COUNT(*) as quantidade,
             COALESCE(SUM(valor_pago), 0) as total
@@ -541,109 +487,111 @@ app.get("/caixa/relatorio", (req, res) => {
     let params = [];
     
     if (dataInicio && dataFim) {
-        query += ` AND data_saida BETWEEN ? AND ?`;
+        query += ` AND data_saida BETWEEN $1 AND $2`;
         params.push(dataInicio, dataFim);
     } else if (dataInicio) {
-        query += ` AND data_saida >= ?`;
+        query += ` AND data_saida >= $1`;
         params.push(dataInicio);
     } else if (dataFim) {
-        query += ` AND data_saida <= ?`;
+        query += ` AND data_saida <= $1`;
         params.push(dataFim);
     }
     
     query += ` GROUP BY data_saida, forma_pagamento ORDER BY data_saida DESC, forma_pagamento`;
     
-    db.all(query, params, (err, rows) => {
-        if (err) {
-            console.error("[BACK] Erro ao gerar relatório de caixa:", err);
-            return res.status(500).json({ error: "Erro ao gerar relatório de caixa" });
-        }
-        res.json({ success: true, dados: rows || [] });
-    });
+    try {
+        await dbReady;
+        const result = await query(query, params);
+        res.json({ success: true, dados: result.rows || [] });
+    } catch (err) {
+        console.error("[BACK] Erro ao gerar relatório de caixa:", err);
+        return res.status(500).json({ error: "Erro ao gerar relatório de caixa" });
+    }
 });
 
 // ROTA PARA OBTER DASHBOARD DE VAGAS
-app.get("/dashboard", (req, res) => {
-    // Busca o total de vagas configurado
-    db.get(`SELECT valor FROM configuracoes WHERE chave = 'total_vagas'`, [], (err, config) => {
-        if (err) {
-            console.error("[BACK] Erro ao buscar total de vagas:", err);
-            return res.status(500).json({ error: "Erro ao buscar configuração de vagas" });
-        }
-
-        const totalVagas = parseInt(config?.valor || 0);
+app.get("/dashboard", async (req, res) => {
+    try {
+        await dbReady;
+        // Busca o total de vagas configurado
+        const configResult = await query(
+            `SELECT valor FROM configuracoes WHERE chave = $1`,
+            ['total_vagas']
+        );
+        const totalVagas = parseInt(configResult.rows?.[0]?.valor || 0, 10);
 
         // Conta veículos ativos no pátio
-        db.get(`SELECT COUNT(*) as ocupadas FROM historico WHERE status = 'ativo'`, [], (err, result) => {
-            if (err) {
-                console.error("[BACK] Erro ao contar vagas ocupadas:", err);
-                return res.status(500).json({ error: "Erro ao contar vagas ocupadas" });
+        const ocupadasResult = await query(
+            `SELECT COUNT(*)::int as ocupadas FROM historico WHERE status = 'ativo'`,
+            []
+        );
+        const ocupadas = ocupadasResult.rows?.[0]?.ocupadas || 0;
+        const disponiveis = totalVagas - ocupadas;
+
+        res.json({ 
+            success: true, 
+            dados: {
+                total_vagas: totalVagas,
+                vagas_ocupadas: ocupadas,
+                vagas_disponiveis: disponiveis,
+                percentual_ocupacao: totalVagas > 0 ? ((ocupadas / totalVagas) * 100).toFixed(1) : 0
             }
-
-            const ocupadas = result.ocupadas || 0;
-            const disponiveis = totalVagas - ocupadas;
-
-            res.json({ 
-                success: true, 
-                dados: {
-                    total_vagas: totalVagas,
-                    vagas_ocupadas: ocupadas,
-                    vagas_disponiveis: disponiveis,
-                    percentual_ocupacao: totalVagas > 0 ? ((ocupadas / totalVagas) * 100).toFixed(1) : 0
-                }
-            });
         });
-    });
+    } catch (err) {
+        console.error("[BACK] Erro ao buscar total de vagas:", err);
+        return res.status(500).json({ error: "Erro ao buscar configuração de vagas" });
+    }
 });
 
 // ROTA PARA OBTER TODAS AS CONFIGURAÇÕES
-app.get("/configuracoes", (req, res) => {
-    db.all(
-        `SELECT * FROM configuracoes ORDER BY chave`,
-        [],
-        (err, rows) => {
-            if (err) {
-                console.error("[BACK] Erro ao buscar configurações:", err);
-                return res.status(500).json({ error: "Erro ao buscar configurações" });
-            }
-            
-            // Converte array em objeto para facilitar o uso no frontend
-            const configs = {};
-            rows.forEach(row => {
-                configs[row.chave] = {
-                    valor: row.valor,
-                    descricao: row.descricao,
-                    atualizado_em: row.atualizado_em
-                };
-            });
-            
-            res.json({ success: true, dados: configs });
-        }
-    );
+app.get("/configuracoes", async (req, res) => {
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT * FROM configuracoes ORDER BY chave`,
+            []
+        );
+        
+        // Converte array em objeto para facilitar o uso no frontend
+        const configs = {};
+        result.rows.forEach(row => {
+            configs[row.chave] = {
+                valor: row.valor,
+                descricao: row.descricao,
+                atualizado_em: row.atualizado_em
+            };
+        });
+        
+        res.json({ success: true, dados: configs });
+    } catch (err) {
+        console.error("[BACK] Erro ao buscar configurações:", err);
+        return res.status(500).json({ error: "Erro ao buscar configurações" });
+    }
 });
 
 // ROTA PARA OBTER UMA CONFIGURAÇÃO ESPECÍFICA
-app.get("/configuracoes/:chave", (req, res) => {
+app.get("/configuracoes/:chave", async (req, res) => {
     const { chave } = req.params;
-    
-    db.get(
-        `SELECT * FROM configuracoes WHERE chave = ?`,
-        [chave],
-        (err, row) => {
-            if (err) {
-                console.error("[BACK] Erro ao buscar configuração:", err);
-                return res.status(500).json({ error: "Erro ao buscar configuração" });
-            }
-            if (!row) {
-                return res.status(404).json({ error: "Configuração não encontrada" });
-            }
-            res.json({ success: true, dados: row });
+
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT * FROM configuracoes WHERE chave = $1`,
+            [chave]
+        );
+        const row = result.rows?.[0];
+        if (!row) {
+            return res.status(404).json({ error: "Configuração não encontrada" });
         }
-    );
+        res.json({ success: true, dados: row });
+    } catch (err) {
+        console.error("[BACK] Erro ao buscar configuração:", err);
+        return res.status(500).json({ error: "Erro ao buscar configuração" });
+    }
 });
 
 // ROTA PARA ATUALIZAR CONFIGURAÇÕES
-app.put("/configuracoes", (req, res) => {
+app.put("/configuracoes", async (req, res) => {
     const configuracoes = req.body;
     
     if (!configuracoes || typeof configuracoes !== 'object') {
@@ -658,42 +606,42 @@ app.put("/configuracoes", (req, res) => {
         return res.status(400).json({ error: "Nenhuma configuração para atualizar" });
     }
     
-    chaves.forEach(chave => {
-        const valor = configuracoes[chave];
-        
-        db.run(
-            `UPDATE configuracoes SET valor = ?, atualizado_em = CURRENT_TIMESTAMP WHERE chave = ?`,
-            [String(valor), chave],
-            function(err) {
-                processadas++;
-                
-                if (err) {
-                    console.error(`[BACK] Erro ao atualizar ${chave}:`, err);
-                    erros.push({ chave, erro: err.message });
-                } else if (this.changes === 0) {
-                    erros.push({ chave, erro: "Configuração não encontrada" });
-                } else {
-                    console.log(`[BACK] Configuração atualizada: ${chave} = ${valor}`);
-                }
-                
-                // Se processou todas, retorna resposta
-                if (processadas === chaves.length) {
-                    if (erros.length > 0) {
-                        res.status(400).json({ 
-                            success: false, 
-                            mensagem: "Algumas configurações não foram atualizadas",
-                            erros 
-                        });
-                    } else {
-                        res.json({ 
-                            success: true, 
-                            mensagem: "Configurações atualizadas com sucesso" 
-                        });
-                    }
-                }
+    try {
+        await dbReady;
+
+        for (const chave of chaves) {
+            const valor = configuracoes[chave];
+
+            const result = await query(
+                `UPDATE configuracoes SET valor = $1, atualizado_em = NOW() WHERE chave = $2`,
+                [String(valor), chave]
+            );
+
+            processadas++;
+
+            if (result.rowCount === 0) {
+                erros.push({ chave, erro: "Configuração não encontrada" });
+            } else {
+                console.log(`[BACK] Configuração atualizada: ${chave} = ${valor}`);
             }
-        );
-    });
+        }
+
+        if (erros.length > 0) {
+            return res.status(400).json({ 
+                success: false, 
+                mensagem: "Algumas configurações não foram atualizadas",
+                erros 
+            });
+        }
+
+        return res.json({ 
+            success: true, 
+            mensagem: "Configurações atualizadas com sucesso" 
+        });
+    } catch (err) {
+        console.error("[BACK] Erro ao atualizar configurações:", err);
+        return res.status(500).json({ error: "Erro ao atualizar configurações" });
+    }
 });
 
 // INICIAR SERVIDOR com fallback se a porta estiver ocupada
@@ -716,4 +664,9 @@ function startServer(port, retries = 5) {
     });
 }
 
-startServer(BASE_PORT);
+if (!process.env.VERCEL) {
+    startServer(BASE_PORT);
+}
+
+export { app };
+export default app;
