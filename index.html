@@ -128,6 +128,22 @@
         <label for="corEntrada">Cor</label>
         <input id="corEntrada" type="text" />
 
+        <div class="inline-actions tipo-cliente">
+            <label class="checkbox-item"><input id="mensalistaCheck" type="checkbox" /> Mensalista?</label>
+            <label class="checkbox-item"><input id="diaristaCheck" type="checkbox" /> Diária?</label>
+        </div>
+
+        <div id="mensalistaFields" class="mensalista-fields" aria-hidden="true">
+            <label for="mensalistaNome">Nome</label>
+            <input id="mensalistaNome" type="text" />
+
+            <label for="mensalistaTelefone">Telefone</label>
+            <input id="mensalistaTelefone" type="text" />
+
+            <label for="mensalistaCpf">CPF</label>
+            <input id="mensalistaCpf" type="text" />
+        </div>
+
         <button id="registrarBtn">Registrar</button>
     </div>
 </div>
@@ -198,6 +214,12 @@
         <label for="totalVagasConfig">Total de Vagas</label>
         <input id="totalVagasConfig" type="number" min="1" />
 
+        <label for="valorMensalidade">Valor Mensalidade (R$)</label>
+        <input id="valorMensalidade" type="number" step="0.01" />
+
+        <label for="valorDiaria">Valor Diária (R$)</label>
+        <input id="valorDiaria" type="number" step="0.01" />
+
         <button id="saveConfigBtn">Salvar</button>
     </div>
 </div>
@@ -256,6 +278,14 @@
                 
                 <label for="filtroAno">Ano:</label>
                 <input type="number" id="filtroAno" placeholder="2025" min="2020" max="2099" />
+
+                <label for="filtroTipo">Tipo:</label>
+                <select id="filtroTipo">
+                    <option value="">Todos</option>
+                    <option value="mensalista">Mensalista</option>
+                    <option value="diarista">Diária</option>
+                    <option value="avulso">Avulso</option>
+                </select>
                 
                 <button id="btnAplicarFiltro">Aplicar Filtro</button>
                 <button id="btnLimparFiltro">Limpar</button>

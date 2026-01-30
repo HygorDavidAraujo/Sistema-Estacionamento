@@ -7,6 +7,11 @@ CREATE TABLE IF NOT EXISTS historico (
     marca VARCHAR(120),
     modelo VARCHAR(120),
     cor VARCHAR(60),
+    mensalista BOOLEAN NOT NULL DEFAULT FALSE,
+    diarista BOOLEAN NOT NULL DEFAULT FALSE,
+    cliente_nome VARCHAR(120),
+    cliente_telefone VARCHAR(40),
+    cliente_cpf VARCHAR(20),
     data_entrada DATE NOT NULL DEFAULT CURRENT_DATE,
     hora_entrada TIME NOT NULL DEFAULT CURRENT_TIME,
     data_saida DATE,
@@ -37,5 +42,7 @@ VALUES
  ('valor_hora_inicial', '5.00', 'Valor da primeira hora (R$)'),
  ('valor_hora_adicional', '2.50', 'Valor por hora adicional (R$)'),
  ('tempo_tolerancia', '15', 'Tempo de tolerância em minutos'),
- ('total_vagas', '50', 'Número total de vagas do estacionamento')
+ ('total_vagas', '50', 'Número total de vagas do estacionamento'),
+ ('valor_mensalidade', '300.00', 'Valor da mensalidade (R$)'),
+ ('valor_diaria', '25.00', 'Valor da diária (R$)')
 ON CONFLICT (chave) DO NOTHING;

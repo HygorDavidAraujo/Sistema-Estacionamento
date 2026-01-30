@@ -76,6 +76,18 @@ function calcularValoresPermanencia(horaEntradaISO, horaSaida = new Date()) {
     return { tempoFormatado, total, horaEntrada, horaSaida, totalMin: totalMinCeil };
 }
 
+function getEntryPricing(entry, horaSaida = new Date()) {
+    const { tempoFormatado, total, horaEntrada } = calcularValoresPermanencia(entry.horaEntrada, horaSaida);
+    const valorDiaria = parseFloat(localStorage.getItem('valorDiaria') || '0');
+    if (entry.mensalista) {
+        return { tempoFormatado, total: 0, horaEntrada, horaSaida, tipo: 'mensalista' };
+    }
+    if (entry.diarista) {
+        return { tempoFormatado, total: valorDiaria || 0, horaEntrada, horaSaida, tipo: 'diarista' };
+    }
+    return { tempoFormatado, total, horaEntrada, horaSaida, tipo: 'avulso' };
+}
+
 ///////////////////////////
 // backend consulta (via backend com API gratuita)
 ///////////////////////////
@@ -320,6 +332,41 @@ function bindUI() {
     // input placa => autoFill
     document.getElementById('placaEntrada').addEventListener('input', autoFillVehicleDataAPI);
 
+    const mensalistaCheck = document.getElementById('mensalistaCheck');
+    const diaristaCheck = document.getElementById('diaristaCheck');
+    const mensalistaFields = document.getElementById('mensalistaFields');
+
+    const syncMensalistaUI = () => {
+        if (mensalistaCheck?.checked) {
+            if (diaristaCheck) diaristaCheck.checked = false;
+        }
+        if (mensalistaFields) {
+            mensalistaFields.setAttribute('aria-hidden', mensalistaCheck?.checked ? 'false' : 'true');
+        }
+        if (!mensalistaCheck?.checked) {
+            document.getElementById('mensalistaNome').value = '';
+            document.getElementById('mensalistaTelefone').value = '';
+            document.getElementById('mensalistaCpf').value = '';
+        }
+    };
+
+    const syncDiaristaUI = () => {
+        if (diaristaCheck?.checked) {
+            if (mensalistaCheck) mensalistaCheck.checked = false;
+        }
+        if (mensalistaFields) {
+            mensalistaFields.setAttribute('aria-hidden', mensalistaCheck?.checked ? 'false' : 'true');
+        }
+        if (!mensalistaCheck?.checked) {
+            document.getElementById('mensalistaNome').value = '';
+            document.getElementById('mensalistaTelefone').value = '';
+            document.getElementById('mensalistaCpf').value = '';
+        }
+    };
+
+    mensalistaCheck?.addEventListener('change', syncMensalistaUI);
+    diaristaCheck?.addEventListener('change', syncDiaristaUI);
+
     // Delegação de eventos para botões de saída nos cards (criados dinamicamente)
     document.getElementById('patioCarList').addEventListener('click', (e) => {
         if (e.target.classList.contains('btn-saida-card')) {
@@ -375,6 +422,14 @@ async function loadConfig() {
                 document.getElementById('totalVagasConfig').value = configs.total_vagas.valor;
                 localStorage.setItem('totalVagas', configs.total_vagas.valor);
             }
+            if (configs.valor_mensalidade) {
+                document.getElementById('valorMensalidade').value = configs.valor_mensalidade.valor;
+                localStorage.setItem('valorMensalidade', configs.valor_mensalidade.valor);
+            }
+            if (configs.valor_diaria) {
+                document.getElementById('valorDiaria').value = configs.valor_diaria.valor;
+                localStorage.setItem('valorDiaria', configs.valor_diaria.valor);
+            }
             
             console.log('[front] Configurações carregadas do banco de dados');
         }
@@ -385,11 +440,17 @@ async function loadConfig() {
         const v2 = localStorage.getItem('valorHoraAdicional') || '2.50';
         const tol = localStorage.getItem('toleranciaHoraAdicional') || '15';
         const vagas = localStorage.getItem('totalVagas') || '50';
+        const mensal = localStorage.getItem('valorMensalidade') || '300.00';
+        const diaria = localStorage.getItem('valorDiaria') || '25.00';
         
         document.getElementById('valorHora').value = v1;
         document.getElementById('valorHoraAdicional').value = v2;
         document.getElementById('toleranciaHoraAdicional').value = tol;
         document.getElementById('totalVagasConfig').value = vagas;
+        document.getElementById('valorMensalidade').value = mensal;
+        document.getElementById('valorDiaria').value = diaria;
+        localStorage.setItem('valorMensalidade', mensal);
+        localStorage.setItem('valorDiaria', diaria);
     }
 }
 
@@ -398,8 +459,10 @@ async function saveConfig() {
     const v2 = document.getElementById('valorHoraAdicional').value;
     const tol = document.getElementById('toleranciaHoraAdicional').value;
     const vagas = document.getElementById('totalVagasConfig').value;
+    const mensal = document.getElementById('valorMensalidade').value;
+    const diaria = document.getElementById('valorDiaria').value;
     
-    if (!v1 || !v2 || !tol || !vagas) return alert('Preencha todos os campos.');
+    if (!v1 || !v2 || !tol || !vagas || !mensal || !diaria) return alert('Preencha todos os campos.');
     
     try {
         // Salva no banco de dados
@@ -410,7 +473,9 @@ async function saveConfig() {
                 valor_hora_inicial: v1,
                 valor_hora_adicional: v2,
                 tempo_tolerancia: tol,
-                total_vagas: vagas
+                total_vagas: vagas,
+                valor_mensalidade: mensal,
+                valor_diaria: diaria
             })
         });
         
@@ -425,6 +490,8 @@ async function saveConfig() {
         localStorage.setItem('valorHoraAdicional', v2);
         localStorage.setItem('toleranciaHoraAdicional', tol);
         localStorage.setItem('totalVagas', vagas);
+        localStorage.setItem('valorMensalidade', mensal);
+        localStorage.setItem('valorDiaria', diaria);
         
         alert('Configurações salvas com sucesso no banco de dados!');
         console.log('[front] Configurações salvas:', data);
@@ -461,6 +528,12 @@ function clearEntradaForm() {
     document.getElementById('marcaEntrada').value = '';
     document.getElementById('modeloEntrada').value = '';
     document.getElementById('corEntrada').value = '';
+    document.getElementById('mensalistaCheck').checked = false;
+    document.getElementById('diaristaCheck').checked = false;
+    document.getElementById('mensalistaNome').value = '';
+    document.getElementById('mensalistaTelefone').value = '';
+    document.getElementById('mensalistaCpf').value = '';
+    document.getElementById('mensalistaFields').setAttribute('aria-hidden', 'true');
 }
 
 ///////////////////////////
@@ -471,9 +544,19 @@ function registrarEntrada() {
     const marca = document.getElementById('marcaEntrada').value.trim();
     const modelo = document.getElementById('modeloEntrada').value.trim();
     const cor = document.getElementById('corEntrada').value.trim();
+    const mensalista = document.getElementById('mensalistaCheck').checked;
+    const diarista = document.getElementById('diaristaCheck').checked;
+    const clienteNome = document.getElementById('mensalistaNome').value.trim();
+    const clienteTelefone = document.getElementById('mensalistaTelefone').value.trim();
+    const clienteCpf = document.getElementById('mensalistaCpf').value.trim();
 
     if (!isValidPlaca(placa)) { alert('Placa inválida. Use formato AAA1234 ou AAA1A23.'); return; }
     if (!placa || !marca || !modelo) { alert('Placa, marca e modelo são obrigatórios.'); return; }
+    if (mensalista && diarista) { alert('Selecione apenas Mensalista ou Diária.'); return; }
+    if (mensalista && (!clienteNome || !clienteTelefone || !clienteCpf)) {
+        alert('Informe nome, telefone e CPF do mensalista.');
+        return;
+    }
 
     const existingEntry = StorageService.getEntryByPlate(placa);
     if (existingEntry) {
@@ -482,13 +565,36 @@ function registrarEntrada() {
         return;
     }
 
-    const entrada = { entryId: StorageService.generateEntryId(), placa, marca, modelo, cor, horaEntrada: new Date().toISOString() };
+    const entrada = {
+        entryId: StorageService.generateEntryId(),
+        placa,
+        marca,
+        modelo,
+        cor,
+        horaEntrada: new Date().toISOString(),
+        mensalista,
+        diarista,
+        cliente_nome: clienteNome,
+        cliente_telefone: clienteTelefone,
+        cliente_cpf: clienteCpf
+    };
 
     // Salva no backend (banco de dados)
     fetch(`${BACKEND_BASE}/entrada`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ placa, marca, modelo, cor, entryId: entrada.entryId })
+        body: JSON.stringify({
+            placa,
+            marca,
+            modelo,
+            cor,
+            entryId: entrada.entryId,
+            mensalista,
+            diarista,
+            cliente_nome: clienteNome,
+            cliente_telefone: clienteTelefone,
+            cliente_cpf: clienteCpf
+        })
     })
     .then(res => res.json())
     .then(data => {
@@ -519,6 +625,10 @@ function registrarEntrada() {
             <p><b>Marca:</b> ${marca}</p>
             <p><b>Modelo:</b> ${modelo}</p>
             <p><b>Cor:</b> ${cor}</p>
+            <p><b>Tipo:</b> ${mensalista ? 'Mensalista' : diarista ? 'Diária' : 'Avulso'}</p>
+            ${mensalista ? `<p><b>Cliente:</b> ${clienteNome}</p>` : ''}
+            ${mensalista ? `<p><b>Telefone:</b> ${clienteTelefone}</p>` : ''}
+            ${mensalista ? `<p><b>CPF:</b> ${clienteCpf}</p>` : ''}
             <p><b>Entrada:</b> ${new Date(entrada.horaEntrada).toLocaleString()}</p>
             <p><b>1ª Hora:</b> R$ ${valorHora}</p>
             <p><b>Hora Adicional:</b> R$ ${valorHoraAdc}</p>
@@ -547,7 +657,7 @@ function prepararPagamento(entry) {
         return;
     }
 
-    const { tempoFormatado, total, horaEntrada, horaSaida } = calcularValoresPermanencia(entry.horaEntrada, new Date());
+    const { tempoFormatado, total, horaEntrada, horaSaida, tipo } = getEntryPricing(entry, new Date());
 
     // Armazena dados temporários para o pagamento
     window.dadosPagamento = {
@@ -558,7 +668,8 @@ function prepararPagamento(entry) {
         horaEntrada: horaEntrada,
         horaSaida: horaSaida,
         tempo: tempoFormatado,
-        valor: total
+        valor: total,
+        tipo
     };
 
     // Mostra resumo no modal de pagamento
@@ -570,6 +681,7 @@ function prepararPagamento(entry) {
         <p><b>Veículo:</b> <span>${entry.marca} ${entry.modelo}</span></p>
         <p><b>Placa:</b> <span>${entry.placa}</span></p>
         <p><b>ID:</b> <span>${entry.entryId}</span></p>
+        <p><b>Tipo:</b> <span>${tipo === 'mensalista' ? 'Mensalista' : tipo === 'diarista' ? 'Diária' : 'Avulso'}</span></p>
         <p class="valor-total"><b>Total a Pagar:</b> <span>R$ ${Number(total).toFixed(2)}</span></p>
     `;
 
@@ -649,6 +761,7 @@ function processarSaida(formaPagamento) {
             <p><b>Entrada:</b> ${dados.horaEntrada.toLocaleString()}</p>
             <p><b>Saída:</b> ${dados.horaSaida.toLocaleString()}</p>
             <p><b>Tempo:</b> ${dados.tempo}</p>
+            <p><b>Tipo:</b> ${dados.tipo === 'mensalista' ? 'Mensalista' : dados.tipo === 'diarista' ? 'Diária' : 'Avulso'}</p>
             <p><b>Valor:</b> R$ ${Number(dados.valor).toFixed(2)}</p>
             ${formaPagamento ? `<p><b>Forma de Pagamento:</b> ${formaPagamento}</p>` : ''}
             <p style="margin-top:20px;font-size:12px;color:#666;">Obrigado pela preferência!</p>
@@ -728,10 +841,15 @@ function updatePatioCarList() {
     }
 
     entries.forEach(ent => {
-        const { tempoFormatado, total } = calcularValoresPermanencia(ent.horaEntrada, new Date());
+        const { tempoFormatado, total } = getEntryPricing(ent, new Date());
+        const badge = ent.mensalista
+            ? '<span class="badge mensalista">Mensalista</span>'
+            : ent.diarista
+                ? '<span class="badge diarista">Diária</span>'
+                : '';
         const div = document.createElement('div');
         div.className = 'car-item';
-        div.innerHTML = `<p><b>Placa:</b> ${ent.placa}</p>
+        div.innerHTML = `<p><b>Placa:</b> ${ent.placa} ${badge}</p>
                          <p><b>Marca:</b> ${ent.marca}</p>
                          <p><b>Modelo:</b> ${ent.modelo}</p>
                          <p><b>Cor:</b> ${ent.cor}</p>
@@ -752,11 +870,21 @@ function printHtml(html) {
     setTimeout(()=>{ w.print(); w.close(); }, 300);
 }
 
+function formatTipoRegistro(row) {
+    if (row?.mensalista) return 'Mensalista';
+    if (row?.diarista) return 'Diária';
+    return 'Avulso';
+}
+
 ///////////////////////////
 // histórico e relatórios
 ///////////////////////////
 function carregarRelatorioResumo() {
-    fetch(`${BACKEND_BASE}/relatorio/resumo`)
+    const tipo = document.getElementById('filtroTipo')?.value || '';
+    const params = new URLSearchParams();
+    if (tipo) params.append('tipo', tipo);
+    const url = params.toString() ? `${BACKEND_BASE}/relatorio/resumo?${params}` : `${BACKEND_BASE}/relatorio/resumo`;
+    fetch(url)
         .then(res => res.json())
         .then(data => {
             if (!data.success || !data.dados) {
@@ -788,6 +916,7 @@ function carregarHistoricoCompleto(filtros = {}) {
     if (filtros.dia) params.append('dia', filtros.dia);
     if (filtros.mes) params.append('mes', filtros.mes);
     if (filtros.ano) params.append('ano', filtros.ano);
+    if (filtros.tipo) params.append('tipo', filtros.tipo);
     
     if (params.toString()) url += '?' + params.toString();
     
@@ -802,10 +931,11 @@ function carregarHistoricoCompleto(filtros = {}) {
                 document.getElementById('historicoConteudo').innerHTML = '<p>Nenhum registro no histórico</p>';
                 return;
             }
-            let html = '<h4>Histórico Completo</h4><table><tr><th>Placa</th><th>Marca/Modelo</th><th>Entrada</th><th>Saída</th><th>Tempo</th><th>Valor</th><th>Status</th></tr>';
+            let html = '<h4>Histórico Completo</h4><table><tr><th>Placa</th><th>Tipo</th><th>Marca/Modelo</th><th>Entrada</th><th>Saída</th><th>Tempo</th><th>Valor</th><th>Status</th></tr>';
             data.dados.forEach(row => {
                 html += `<tr>
                     <td>${row.placa}</td>
+                    <td>${formatTipoRegistro(row)}</td>
                     <td>${row.marca} ${row.modelo}</td>
                     <td>${row.data_entrada} ${row.hora_entrada}</td>
                     <td>${row.data_saida || '-'} ${row.hora_saida || '-'}</td>
@@ -827,9 +957,10 @@ function aplicarFiltroData() {
     const dia = document.getElementById('filtroDia').value;
     const mes = document.getElementById('filtroMes').value;
     const ano = document.getElementById('filtroAno').value;
+    const tipo = document.getElementById('filtroTipo').value;
     
-    if (!dia && !mes && !ano) {
-        alert('Selecione pelo menos um filtro (dia, mês ou ano)');
+    if (!dia && !mes && !ano && !tipo) {
+        alert('Selecione pelo menos um filtro (dia, mês, ano ou tipo)');
         return;
     }
     
@@ -837,6 +968,7 @@ function aplicarFiltroData() {
     if (dia) filtros.dia = dia;
     if (mes) filtros.mes = mes;
     if (ano) filtros.ano = ano;
+    if (tipo) filtros.tipo = tipo;
     
     carregarHistoricoCompleto(filtros);
 }
@@ -845,6 +977,7 @@ function limparFiltro() {
     document.getElementById('filtroDia').value = '';
     document.getElementById('filtroMes').value = '';
     document.getElementById('filtroAno').value = '';
+    document.getElementById('filtroTipo').value = '';
     carregarHistoricoCompleto();
 }
 
@@ -864,9 +997,10 @@ function buscarPorPlaca() {
                 document.getElementById('historicoConteudo').innerHTML = '<p>Nenhum registro encontrado para placa: ' + placaNorm + '</p>';
                 return;
             }
-            let html = '<h4>Histórico da Placa: ' + placaNorm + '</h4><table><tr><th>Data Entrada</th><th>Hora Entrada</th><th>Data Saída</th><th>Hora Saída</th><th>Tempo</th><th>Valor</th><th>Status</th></tr>';
+            let html = '<h4>Histórico da Placa: ' + placaNorm + '</h4><table><tr><th>Tipo</th><th>Data Entrada</th><th>Hora Entrada</th><th>Data Saída</th><th>Hora Saída</th><th>Tempo</th><th>Valor</th><th>Status</th></tr>';
             data.dados.forEach(row => {
                 html += `<tr>
+                    <td>${formatTipoRegistro(row)}</td>
                     <td>${row.data_entrada}</td>
                     <td>${row.hora_entrada}</td>
                     <td>${row.data_saida || '-'}</td>

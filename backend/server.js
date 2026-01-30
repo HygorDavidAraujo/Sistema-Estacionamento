@@ -188,9 +188,22 @@ app.post("/placa/reconhecer", upload.single('image'), async (req, res) => {
 // ROTA PARA REGISTRAR ENTRADA DE VEÍCULO
 app.post("/entrada", async (req, res) => {
     let { placa, marca, modelo, cor, entryId } = req.body;
+    const mensalista = Boolean(req.body.mensalista);
+    const diarista = Boolean(req.body.diarista);
+    const cliente_nome = String(req.body.cliente_nome || '').trim();
+    const cliente_telefone = String(req.body.cliente_telefone || '').trim();
+    const cliente_cpf = String(req.body.cliente_cpf || '').trim();
     
     if (!placa) {
         return res.status(400).json({ error: "Placa é obrigatória" });
+    }
+
+    if (mensalista && diarista) {
+        return res.status(400).json({ error: "Selecione apenas Mensalista ou Diária" });
+    }
+
+    if (mensalista && (!cliente_nome || !cliente_telefone || !cliente_cpf)) {
+        return res.status(400).json({ error: "Nome, telefone e CPF são obrigatórios para mensalista" });
     }
     
     // Normaliza placa para maiúsculas
@@ -226,10 +239,10 @@ app.post("/entrada", async (req, res) => {
         const hora_entrada = formatTimeLocal(now);
 
         const insertResult = await query(
-            `INSERT INTO historico (entry_id, placa, marca, modelo, cor, data_entrada, hora_entrada, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'ativo')
+            `INSERT INTO historico (entry_id, placa, marca, modelo, cor, data_entrada, hora_entrada, status, mensalista, diarista, cliente_nome, cliente_telefone, cliente_cpf)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'ativo', $8, $9, $10, $11, $12)
              RETURNING id`,
-            [entry_id, placa, marca || '', modelo || '', cor || '', data_entrada, hora_entrada]
+            [entry_id, placa, marca || '', modelo || '', cor || '', data_entrada, hora_entrada, mensalista, diarista, cliente_nome, cliente_telefone, cliente_cpf]
         );
 
         res.json({ 
@@ -329,7 +342,7 @@ app.post("/saida", async (req, res) => {
 
 // ROTA PARA OBTER HISTÓRICO COMPLETO
 app.get("/historico", async (req, res) => {
-    const { dataInicio, dataFim, dia, mes, ano } = req.query;
+    const { dataInicio, dataFim, dia, mes, ano, tipo } = req.query;
     
     let query = `
         SELECT
@@ -339,6 +352,11 @@ app.get("/historico", async (req, res) => {
             marca,
             modelo,
             cor,
+            mensalista,
+            diarista,
+            cliente_nome,
+            cliente_telefone,
+            cliente_cpf,
             TO_CHAR(data_entrada, 'DD/MM/YYYY') as data_entrada,
             TO_CHAR(hora_entrada, 'HH24:MI:SS') as hora_entrada,
             TO_CHAR(data_saida, 'DD/MM/YYYY') as data_saida,
@@ -351,31 +369,38 @@ app.get("/historico", async (req, res) => {
         FROM historico
         WHERE 1=1`;
     let params = [];
+    const addParam = (value) => {
+        params.push(value);
+        return `$${params.length}`;
+    };
     
     // Filtro por período (data início e fim)
     if (dataInicio && dataFim) {
-        query += ` AND data_entrada BETWEEN $1 AND $2`;
-        params.push(dataInicio, dataFim);
+        query += ` AND data_entrada BETWEEN ${addParam(dataInicio)} AND ${addParam(dataFim)}`;
     }
     // Filtro por dia, mês e ano
     else if (dia && mes && ano) {
-        query += ` AND EXTRACT(DAY FROM data_entrada) = $1 AND EXTRACT(MONTH FROM data_entrada) = $2 AND EXTRACT(YEAR FROM data_entrada) = $3`;
-        params.push(parseInt(dia, 10), parseInt(mes, 10), parseInt(ano, 10));
+        query += ` AND EXTRACT(DAY FROM data_entrada) = ${addParam(parseInt(dia, 10))} AND EXTRACT(MONTH FROM data_entrada) = ${addParam(parseInt(mes, 10))} AND EXTRACT(YEAR FROM data_entrada) = ${addParam(parseInt(ano, 10))}`;
     }
     // Filtro por mês e ano
     else if (mes && ano) {
-        query += ` AND EXTRACT(MONTH FROM data_entrada) = $1 AND EXTRACT(YEAR FROM data_entrada) = $2`;
-        params.push(parseInt(mes, 10), parseInt(ano, 10));
+        query += ` AND EXTRACT(MONTH FROM data_entrada) = ${addParam(parseInt(mes, 10))} AND EXTRACT(YEAR FROM data_entrada) = ${addParam(parseInt(ano, 10))}`;
     }
     // Filtro apenas por ano
     else if (ano) {
-        query += ` AND EXTRACT(YEAR FROM data_entrada) = $1`;
-        params.push(parseInt(ano, 10));
+        query += ` AND EXTRACT(YEAR FROM data_entrada) = ${addParam(parseInt(ano, 10))}`;
     }
     // Filtro apenas por dia (todos os meses/anos)
     else if (dia) {
-        query += ` AND EXTRACT(DAY FROM data_entrada) = $1`;
-        params.push(parseInt(dia, 10));
+        query += ` AND EXTRACT(DAY FROM data_entrada) = ${addParam(parseInt(dia, 10))}`;
+    }
+
+    if (tipo === 'mensalista') {
+        query += ` AND mensalista = ${addParam(true)}`;
+    } else if (tipo === 'diarista') {
+        query += ` AND diarista = ${addParam(true)}`;
+    } else if (tipo === 'avulso') {
+        query += ` AND mensalista = false AND diarista = false`;
     }
     
     query += ` ORDER BY criado_em DESC`;
@@ -404,6 +429,11 @@ app.get("/historico/:placa", async (req, res) => {
                 marca,
                 modelo,
                 cor,
+                mensalista,
+                diarista,
+                cliente_nome,
+                cliente_telefone,
+                cliente_cpf,
                 TO_CHAR(data_entrada, 'DD/MM/YYYY') as data_entrada,
                 TO_CHAR(hora_entrada, 'HH24:MI:SS') as hora_entrada,
                 TO_CHAR(data_saida, 'DD/MM/YYYY') as data_saida,
@@ -425,8 +455,20 @@ app.get("/historico/:placa", async (req, res) => {
 
 // ROTA PARA OBTER RELATÓRIO RESUMIDO (ESTATÍSTICAS)
 app.get("/relatorio/resumo", async (req, res) => {
+    const { tipo } = req.query;
     try {
         await dbReady;
+        let where = '';
+        const params = [];
+        if (tipo === 'mensalista') {
+            where = 'WHERE mensalista = $1';
+            params.push(true);
+        } else if (tipo === 'diarista') {
+            where = 'WHERE diarista = $1';
+            params.push(true);
+        } else if (tipo === 'avulso') {
+            where = 'WHERE mensalista = false AND diarista = false';
+        }
         const result = await query(
             `SELECT 
                 COUNT(*) as total_movimentacoes,
@@ -435,8 +477,8 @@ app.get("/relatorio/resumo", async (req, res) => {
                 COALESCE(SUM(valor_pago), 0) as receita_total,
                 COALESCE(AVG(valor_pago), 0) as valor_medio,
                 COUNT(DISTINCT placa) as total_veiculos_unicos
-             FROM historico`,
-            []
+             FROM historico ${where}`,
+            params
         );
         res.json({ success: true, dados: result.rows?.[0] || {} });
     } catch (err) {

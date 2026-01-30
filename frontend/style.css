@@ -37,6 +37,17 @@ button.btn-ghost:hover { background: #dde2e6; }
 .inline-actions input { flex:1; min-width: 200px; }
 .inline-actions input { margin:0; }
 
+.tipo-cliente { justify-content: flex-start; }
+.checkbox-item { display:flex; align-items:center; gap:6px; font-size:13px; color:#333; }
+.checkbox-item input { margin:0; }
+
+.mensalista-fields[aria-hidden="true"] { display:none; }
+.mensalista-fields { margin: 8px 0 0 0; }
+
+.badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; margin-left:6px; }
+.badge.mensalista { background:#e3f9e5; color:#1b5e20; }
+.badge.diarista { background:#fff3cd; color:#8a6d3b; }
+
 .camera-container {
     background:#0f172a;
     border-radius:10px;

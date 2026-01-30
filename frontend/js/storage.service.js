@@ -1,6 +1,6 @@
 (function() {
     const STORAGE_KEY = 'parkingEntries';
-    const IGNORE_KEYS = new Set(['valorHora', 'valorHoraAdicional', 'toleranciaHoraAdicional', 'vehicleDB', STORAGE_KEY, 'totalVagas']);
+    const IGNORE_KEYS = new Set(['valorHora', 'valorHoraAdicional', 'toleranciaHoraAdicional', 'vehicleDB', STORAGE_KEY, 'totalVagas', 'valorMensalidade', 'valorDiaria']);
 
     const normalizePlaca = (p) => (p || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
