@@ -36,6 +36,28 @@ CREATE TABLE IF NOT EXISTS configuracoes (
     atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS mensalistas (
+    id BIGSERIAL PRIMARY KEY,
+    placa VARCHAR(16) UNIQUE NOT NULL,
+    nome VARCHAR(120) NOT NULL,
+    telefone VARCHAR(40),
+    cpf VARCHAR(20),
+    vencimento DATE,
+    ativo BOOLEAN NOT NULL DEFAULT TRUE,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mensalistas_placa ON mensalistas(placa);
+CREATE INDEX IF NOT EXISTS idx_mensalistas_cpf ON mensalistas(cpf);
+
+CREATE TABLE IF NOT EXISTS auditoria (
+    id BIGSERIAL PRIMARY KEY,
+    acao VARCHAR(120) NOT NULL,
+    detalhes JSONB,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Seeds padrão (idempotente)
 INSERT INTO configuracoes (chave, valor, descricao)
 VALUES

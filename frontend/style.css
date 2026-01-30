@@ -12,6 +12,8 @@ header {
     display:flex;
     justify-content:space-between;
     align-items:center;
+    gap: 12px;
+    flex-wrap: wrap;
 }
 .header-actions button {
     margin-left:8px;
@@ -380,6 +382,10 @@ input[type="text"], input[type="number"], select { width:100%; padding:8px 10px;
 .historico-conteudo td { border: 1px solid #ddd; padding: 8px; }
 .historico-conteudo tr:hover { background: #f9f9f9; }
 
+.mensalista-form { background:#f9f9f9; padding:12px; border-radius:8px; margin-bottom:16px; }
+.mensalista-form .inline-actions { margin-top: 12px; }
+.hidden-file { display: none; }
+
 @media(max-width:1024px){
     .main-container {
         flex-direction: column;
@@ -399,4 +405,6 @@ input[type="text"], input[type="number"], select { width:100%; padding:8px 10px;
     .historico-actions button { width: 100%; }
     .relatorios-filtros { flex-direction: column; }
     .relatorios-filtros input { max-width: 100%; }
+    .header-actions { width: 100%; display:flex; flex-wrap: wrap; gap:6px; }
+    .header-actions button { font-size: 14px; margin-left: 0; }
 }

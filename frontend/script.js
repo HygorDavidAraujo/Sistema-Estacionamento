@@ -2,6 +2,17 @@
 const IS_LOCAL_ENV = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:';
 let BACKEND_BASE = window.BACKEND_BASE || (IS_LOCAL_ENV ? 'http://localhost:3000' : `${location.origin}/api`);
 
+function getAuthToken() {
+    return localStorage.getItem('adminToken') || '';
+}
+
+function apiFetch(url, options = {}) {
+    const token = getAuthToken();
+    const headers = new Headers(options.headers || {});
+    if (token) headers.set('x-admin-token', token);
+    return fetch(url, { ...options, headers });
+}
+
 async function detectBackendPort(startPort = 3000, maxPort = 3005) {
     for (let port = startPort; port <= maxPort; port++) {
         try {
@@ -26,14 +37,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         BACKEND_BASE = await detectBackendPort();
     }
     window.BACKEND_BASE = BACKEND_BASE;
+    updateAuthButton();
     StorageService.migrateLegacyEntries?.();
     bindUI();
     await loadConfig(); // Aguarda carregamento das configurações do banco
+    await syncActiveEntriesFromBackend();
     carregarDashboard(); // Carrega dashboard de vagas
     carregarDashboardCaixa(); // Carrega dashboard de caixa
     updatePatioCarList();
     // atualiza tempos no pátio, dashboard vagas e caixa a cada 10s
     setInterval(() => {
+        syncActiveEntriesFromBackend();
         updatePatioCarList();
         carregarDashboard();
         carregarDashboardCaixa();
@@ -116,6 +130,28 @@ function getVehicleInfo(placa) {
     return db[key] || null;
 }
 
+async function preencherMensalistaPorPlaca(placa) {
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/mensalistas/${placa}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.success || !data.dados) return;
+        const mensalista = data.dados;
+        document.getElementById('mensalistaNome').value = mensalista.nome || '';
+        document.getElementById('mensalistaTelefone').value = mensalista.telefone || '';
+        document.getElementById('mensalistaCpf').value = mensalista.cpf || '';
+        if (mensalista.vencimento) {
+            const venc = new Date(mensalista.vencimento);
+            const hoje = new Date();
+            if (venc < new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())) {
+                alert('Mensalidade vencida. Verifique o cadastro do mensalista.');
+            }
+        }
+    } catch (err) {
+        // sem mensalista cadastrado
+    }
+}
+
 ///////////////////////////
 // debounce helper
 ///////////////////////////
@@ -172,6 +208,16 @@ const autoFillVehicleDataAPI = debounce(async function() {
         // API não encontrou: usuário preenche manualmente
         console.log('[front] Placa não encontrada na API, preencha manualmente');
     }
+}, 600);
+
+const autoFillMensalistaData = debounce(async function() {
+    const mensalistaCheck = document.getElementById('mensalistaCheck');
+    if (!mensalistaCheck?.checked) return;
+    const placaIn = document.getElementById('placaEntrada');
+    if (!placaIn) return;
+    const placa = normalizePlaca(placaIn.value || '');
+    if (placa.length < 7 || !isValidPlaca(placa)) return;
+    await preencherMensalistaPorPlaca(placa);
 }, 600);
 
 ///////////////////////////
@@ -265,7 +311,7 @@ function fecharCameraSaida() {
     QrReaderService.stop(videoEl);
 }
 
-function tratarQrCodeSaida(payload) {
+async function tratarQrCodeSaida(payload) {
     let entryId = payload;
     let plateFromPayload = '';
     try {
@@ -276,7 +322,10 @@ function tratarQrCodeSaida(payload) {
         // payload não é JSON, usa texto puro
     }
 
-    const entry = StorageService.getEntryById(entryId) || StorageService.getEntryByPlate(plateFromPayload);
+    let entry = StorageService.getEntryById(entryId) || StorageService.getEntryByPlate(plateFromPayload);
+    if (!entry) {
+        entry = await fetchActiveEntryFromBackend({ entryId, placa: plateFromPayload });
+    }
     if (!entry) {
         alert('QR Code não corresponde a uma entrada ativa.');
         return;
@@ -298,10 +347,18 @@ function bindUI() {
         carregarRelatorioResumo();
     };
     document.getElementById('btnMenu').onclick = () => toggleMenu(true);
+    document.getElementById('btnMensalistas').onclick = () => {
+        openPopup('mensalistasPopup');
+        carregarMensalistas();
+    };
+    document.getElementById('btnAuth').onclick = handleAuthClick;
 
     document.getElementById('registrarBtn').onclick = registrarEntrada;
     document.getElementById('calcularBtn').onclick = calcularPermanencia;
     document.getElementById('saveConfigBtn').onclick = saveConfig;
+    document.getElementById('btnBackupExport')?.addEventListener('click', exportarBackup);
+    document.getElementById('btnBackupImport')?.addEventListener('click', () => document.getElementById('backupFileInput').click());
+    document.getElementById('backupFileInput')?.addEventListener('change', importarBackup);
 
     document.getElementById('scanPlacaBtn')?.addEventListener('click', iniciarScanPlaca);
     document.getElementById('capturarPlacaBtn')?.addEventListener('click', capturarPlacaDaCamera);
@@ -327,10 +384,16 @@ function bindUI() {
     document.getElementById('btnGerarRelatorioCaixa')?.addEventListener('click', gerarRelatorioCaixa);
     document.getElementById('confirmarPagamentoBtn')?.addEventListener('click', confirmarPagamento);
 
+    document.getElementById('btnBuscarMensalistas')?.addEventListener('click', carregarMensalistas);
+    document.getElementById('btnNovoMensalista')?.addEventListener('click', limparFormMensalista);
+    document.getElementById('btnSalvarMensalista')?.addEventListener('click', salvarMensalista);
+    document.getElementById('btnLimparMensalista')?.addEventListener('click', limparFormMensalista);
+
     document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', e => closePopupByElement(e.target.closest('.popup'))));
 
     // input placa => autoFill
     document.getElementById('placaEntrada').addEventListener('input', autoFillVehicleDataAPI);
+    document.getElementById('placaEntrada').addEventListener('input', autoFillMensalistaData);
 
     const mensalistaCheck = document.getElementById('mensalistaCheck');
     const diaristaCheck = document.getElementById('diaristaCheck');
@@ -339,6 +402,8 @@ function bindUI() {
     const syncMensalistaUI = () => {
         if (mensalistaCheck?.checked) {
             if (diaristaCheck) diaristaCheck.checked = false;
+            const placa = normalizePlaca(document.getElementById('placaEntrada').value || '');
+            if (placa) preencherMensalistaPorPlaca(placa);
         }
         if (mensalistaFields) {
             mensalistaFields.setAttribute('aria-hidden', mensalistaCheck?.checked ? 'false' : 'true');
@@ -392,13 +457,87 @@ function closePopupByElement(el) {
 }
 function toggleMenu(show) { const el = document.getElementById('menu'); if (!el) return; el.setAttribute('aria-hidden', show ? 'false' : 'true'); }
 
+function updateAuthButton() {
+    const btn = document.getElementById('btnAuth');
+    if (!btn) return;
+    btn.textContent = getAuthToken() ? 'Sair' : 'Acesso';
+}
+
+function handleAuthClick() {
+    const token = getAuthToken();
+    if (token) {
+        localStorage.removeItem('adminToken');
+        updateAuthButton();
+        alert('Acesso removido.');
+        return;
+    }
+    const input = prompt('Informe o token de acesso:');
+    if (!input) return;
+    localStorage.setItem('adminToken', input.trim());
+    updateAuthButton();
+    alert('Acesso aplicado.');
+}
+
+function mapBackendEntryToLocal(row) {
+    const dateIso = row.data_entrada_iso || '';
+    const timeIso = row.hora_entrada_iso || '00:00:00';
+    const horaEntrada = dateIso ? `${dateIso}T${timeIso}` : new Date().toISOString();
+    return {
+        entryId: row.entry_id,
+        placa: row.placa,
+        marca: row.marca || '',
+        modelo: row.modelo || '',
+        cor: row.cor || '',
+        horaEntrada,
+        mensalista: !!row.mensalista,
+        diarista: !!row.diarista,
+        cliente_nome: row.cliente_nome || '',
+        cliente_telefone: row.cliente_telefone || '',
+        cliente_cpf: row.cliente_cpf || ''
+    };
+}
+
+async function syncActiveEntriesFromBackend() {
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/patio/ativos`);
+        if (!res.ok) return false;
+        const data = await res.json();
+        if (!data.success || !Array.isArray(data.dados)) return false;
+        const entries = data.dados.map(mapBackendEntryToLocal);
+        StorageService.replaceEntries(entries);
+        return true;
+    } catch (err) {
+        console.warn('[front] falha ao sincronizar pátio:', err.message);
+        return false;
+    }
+}
+
+async function fetchActiveEntryFromBackend({ entryId, placa }) {
+    const params = new URLSearchParams();
+    if (entryId) params.append('entryId', entryId);
+    if (placa) params.append('placa', placa);
+    if (!params.toString()) return null;
+
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/patio/ativo?${params}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!data.success || !data.dados) return null;
+        const entry = mapBackendEntryToLocal(data.dados);
+        StorageService.upsertEntry(entry);
+        return entry;
+    } catch (err) {
+        return null;
+    }
+}
+
 ///////////////////////////
 // config
 ///////////////////////////
 async function loadConfig() {
     try {
         // Carrega do banco de dados
-        const res = await fetch(`${BACKEND_BASE}/configuracoes`);
+        const res = await apiFetch(`${BACKEND_BASE}/configuracoes`);
         if (!res.ok) throw new Error('Erro ao carregar configurações');
         
         const data = await res.json();
@@ -466,7 +605,7 @@ async function saveConfig() {
     
     try {
         // Salva no banco de dados
-        const res = await fetch(`${BACKEND_BASE}/configuracoes`, {
+        const res = await apiFetch(`${BACKEND_BASE}/configuracoes`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -580,7 +719,7 @@ function registrarEntrada() {
     };
 
     // Salva no backend (banco de dados)
-    fetch(`${BACKEND_BASE}/entrada`, {
+    apiFetch(`${BACKEND_BASE}/entrada`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -696,11 +835,14 @@ function prepararPagamento(entry) {
 }
 
 ///////////////////////////
-function calcularPermanencia() {
+async function calcularPermanencia() {
     const placa = normalizePlaca(document.getElementById('placaSaida').value);
     if (!placa) return alert('Informe a placa.');
     if (!isValidPlaca(placa)) return alert('Placa inválida. Use formato AAA1234 ou AAA1A23.');
-    const entrada = StorageService.getEntryByPlate(placa);
+    let entrada = StorageService.getEntryByPlate(placa);
+    if (!entrada) {
+        entrada = await fetchActiveEntryFromBackend({ placa });
+    }
     if (!entrada) return alert('Veículo não encontrado.');
     prepararPagamento(entrada);
 }
@@ -731,7 +873,7 @@ function processarSaida(formaPagamento) {
     }
     
     // Registra saída no backend
-    fetch(`${BACKEND_BASE}/saida`, {
+    apiFetch(`${BACKEND_BASE}/saida`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -806,7 +948,7 @@ function registrarSaidaPeloCard(entryId) {
 ///////////////////////////
 async function carregarDashboard() {
     try {
-        const res = await fetch(`${BACKEND_BASE}/dashboard`);
+        const res = await apiFetch(`${BACKEND_BASE}/dashboard`);
         if (!res.ok) throw new Error('Erro ao carregar dashboard');
         
         const data = await res.json();
@@ -876,6 +1018,152 @@ function formatTipoRegistro(row) {
     return 'Avulso';
 }
 
+async function exportarBackup() {
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/backup`);
+        if (!res.ok) throw new Error('Erro ao exportar backup');
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro ao exportar backup');
+        const blob = new Blob([JSON.stringify(data.dados, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `backup-estacionamento-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert('Falha ao exportar backup: ' + err.message);
+    }
+}
+
+async function importarBackup(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!confirm('Tem certeza? Essa ação substitui os dados atuais.')) return;
+
+    try {
+        const text = await file.text();
+        const payload = JSON.parse(text);
+        const res = await apiFetch(`${BACKEND_BASE}/restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('Erro ao restaurar backup');
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro ao restaurar backup');
+        alert('Backup restaurado com sucesso.');
+        await syncActiveEntriesFromBackend();
+        updatePatioCarList();
+        carregarDashboard();
+    } catch (err) {
+        alert('Falha ao restaurar backup: ' + err.message);
+    }
+}
+
+function limparFormMensalista() {
+    window.mensalistaEditId = null;
+    document.getElementById('mensalistaPlaca').value = '';
+    document.getElementById('mensalistaNomeForm').value = '';
+    document.getElementById('mensalistaTelefoneForm').value = '';
+    document.getElementById('mensalistaCpfForm').value = '';
+    document.getElementById('mensalistaVencimento').value = '';
+    document.getElementById('mensalistaAtivo').checked = true;
+}
+
+function preencherFormMensalista(row) {
+    window.mensalistaEditId = row.id;
+    document.getElementById('mensalistaPlaca').value = row.placa || '';
+    document.getElementById('mensalistaNomeForm').value = row.nome || '';
+    document.getElementById('mensalistaTelefoneForm').value = row.telefone || '';
+    document.getElementById('mensalistaCpfForm').value = row.cpf || '';
+    document.getElementById('mensalistaVencimento').value = row.vencimento ? String(row.vencimento).slice(0, 10) : '';
+    document.getElementById('mensalistaAtivo').checked = row.ativo !== false;
+}
+
+async function salvarMensalista() {
+    const placa = normalizePlaca(document.getElementById('mensalistaPlaca').value);
+    const nome = document.getElementById('mensalistaNomeForm').value.trim();
+    const telefone = document.getElementById('mensalistaTelefoneForm').value.trim();
+    const cpf = document.getElementById('mensalistaCpfForm').value.trim();
+    const vencimento = document.getElementById('mensalistaVencimento').value;
+    const ativo = document.getElementById('mensalistaAtivo').checked;
+
+    if (!placa || !isValidPlaca(placa)) return alert('Informe uma placa válida.');
+    if (!nome) return alert('Nome é obrigatório.');
+
+    try {
+        const editId = window.mensalistaEditId;
+        const url = editId ? `${BACKEND_BASE}/mensalistas/${editId}` : `${BACKEND_BASE}/mensalistas`;
+        const method = editId ? 'PUT' : 'POST';
+        const res = await apiFetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ placa, nome, telefone, cpf, vencimento, ativo })
+        });
+        if (!res.ok) throw new Error('Erro ao salvar mensalista');
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro ao salvar mensalista');
+        limparFormMensalista();
+        carregarMensalistas();
+        alert('Mensalista salvo com sucesso.');
+    } catch (err) {
+        alert('Falha ao salvar mensalista: ' + err.message);
+    }
+}
+
+async function carregarMensalistas() {
+    const q = document.getElementById('mensalistasBusca').value.trim();
+    const status = document.getElementById('mensalistasStatus').value;
+    const params = new URLSearchParams();
+    if (q) params.append('q', q);
+    if (status) params.append('status', status);
+    const url = params.toString() ? `${BACKEND_BASE}/mensalistas?${params}` : `${BACKEND_BASE}/mensalistas`;
+
+    try {
+        const res = await apiFetch(url);
+        if (!res.ok) throw new Error('Erro ao carregar mensalistas');
+        const data = await res.json();
+        if (!data.success || !data.dados) throw new Error('Erro ao carregar mensalistas');
+        renderMensalistas(data.dados);
+    } catch (err) {
+        document.getElementById('mensalistasLista').innerHTML = '<p>Erro ao carregar mensalistas.</p>';
+    }
+}
+
+function renderMensalistas(lista) {
+    if (!lista || lista.length === 0) {
+        document.getElementById('mensalistasLista').innerHTML = '<p>Nenhum mensalista cadastrado.</p>';
+        return;
+    }
+
+    let html = '<table><tr><th>Placa</th><th>Nome</th><th>CPF</th><th>Vencimento</th><th>Status</th><th>Ações</th></tr>';
+    lista.forEach((row) => {
+        const venc = row.vencimento ? String(row.vencimento).slice(0, 10) : '-';
+        html += `<tr>
+            <td>${row.placa}</td>
+            <td>${row.nome}</td>
+            <td>${row.cpf || '-'}</td>
+            <td>${venc}</td>
+            <td>${row.ativo === false ? 'Inativo' : 'Ativo'}</td>
+            <td>
+                <button class="btn-ghost" data-edit-id="${row.id}">Editar</button>
+            </td>
+        </tr>`;
+    });
+    html += '</table>';
+    document.getElementById('mensalistasLista').innerHTML = html;
+
+    document.querySelectorAll('#mensalistasLista [data-edit-id]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-edit-id');
+            const row = lista.find(r => String(r.id) === String(id));
+            if (row) preencherFormMensalista(row);
+        });
+    });
+}
+
 ///////////////////////////
 // histórico e relatórios
 ///////////////////////////
@@ -884,7 +1172,7 @@ function carregarRelatorioResumo() {
     const params = new URLSearchParams();
     if (tipo) params.append('tipo', tipo);
     const url = params.toString() ? `${BACKEND_BASE}/relatorio/resumo?${params}` : `${BACKEND_BASE}/relatorio/resumo`;
-    fetch(url)
+    apiFetch(url)
         .then(res => res.json())
         .then(data => {
             if (!data.success || !data.dados) {
@@ -920,7 +1208,7 @@ function carregarHistoricoCompleto(filtros = {}) {
     
     if (params.toString()) url += '?' + params.toString();
     
-    fetch(url)
+    apiFetch(url)
         .then(res => res.json())
         .then(data => {
             if (!data.success || !data.dados) {
@@ -986,7 +1274,7 @@ function buscarPorPlaca() {
     if (!placa) return;
     
     const placaNorm = normalizePlaca(placa);
-    fetch(`${BACKEND_BASE}/historico/${placaNorm}`)
+    apiFetch(`${BACKEND_BASE}/historico/${placaNorm}`)
         .then(res => res.json())
         .then(data => {
             if (!data.success || !data.dados) {
@@ -1024,7 +1312,7 @@ function buscarPorPlaca() {
 ///////////////////////////
 async function carregarDashboardCaixa() {
     try {
-        const res = await fetch(`${BACKEND_BASE}/caixa/dashboard`);
+        const res = await apiFetch(`${BACKEND_BASE}/caixa/dashboard`);
         if (!res.ok) throw new Error('Erro ao carregar dashboard de caixa');
         
         const data = await res.json();
@@ -1103,7 +1391,7 @@ async function gerarRelatorioCaixa() {
             params.append('dataFim', `${dia}/${mes}/${ano}`);
         }
         
-        const res = await fetch(`${BACKEND_BASE}/caixa/relatorio?${params}`);
+        const res = await apiFetch(`${BACKEND_BASE}/caixa/relatorio?${params}`);
         if (!res.ok) throw new Error('Erro ao gerar relatório');
         
         const data = await res.json();

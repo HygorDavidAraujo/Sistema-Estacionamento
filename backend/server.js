@@ -1,7 +1,7 @@
 import express from "express";
 import fetch from "node-fetch";
 import cors from "cors";
-import { initDb, query } from "./db.js";
+import { initDb, query, tx } from "./db.js";
 import multer from "multer";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
@@ -19,6 +19,28 @@ app.use((req, _res, next) => {
     next();
 });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
+
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+
+function requireAuth(req, res, next) {
+    if (!ADMIN_TOKEN) return next();
+    const token = req.headers['x-admin-token'] || req.headers['X-Admin-Token'];
+    if (!token || token !== ADMIN_TOKEN) {
+        return res.status(401).json({ error: 'Acesso não autorizado' });
+    }
+    return next();
+}
+
+async function logAudit(acao, detalhes = {}) {
+    try {
+        await query(
+            `INSERT INTO auditoria (acao, detalhes) VALUES ($1, $2)`,
+            [acao, JSON.stringify(detalhes || {})]
+        );
+    } catch (err) {
+        console.warn('[BACK] Falha ao registrar auditoria:', err.message);
+    }
+}
 
 const dbReady = initDb().catch((err) => {
     console.error("[BACK] Falha ao inicializar schema:", err);
@@ -186,7 +208,7 @@ app.post("/placa/reconhecer", upload.single('image'), async (req, res) => {
 });
 
 // ROTA PARA REGISTRAR ENTRADA DE VEÍCULO
-app.post("/entrada", async (req, res) => {
+app.post("/entrada", requireAuth, async (req, res) => {
     let { placa, marca, modelo, cor, entryId } = req.body;
     const mensalista = Boolean(req.body.mensalista);
     const diarista = Boolean(req.body.diarista);
@@ -245,6 +267,21 @@ app.post("/entrada", async (req, res) => {
             [entry_id, placa, marca || '', modelo || '', cor || '', data_entrada, hora_entrada, mensalista, diarista, cliente_nome, cliente_telefone, cliente_cpf]
         );
 
+        if (mensalista && placa) {
+            await query(
+                `INSERT INTO mensalistas (placa, nome, telefone, cpf)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (placa) DO UPDATE SET
+                    nome = EXCLUDED.nome,
+                    telefone = EXCLUDED.telefone,
+                    cpf = EXCLUDED.cpf,
+                    atualizado_em = NOW()`,
+                [placa, cliente_nome, cliente_telefone || null, cliente_cpf || null]
+            );
+        }
+
+        await logAudit('entrada', { placa, entry_id, mensalista, diarista });
+
         res.json({ 
             success: true, 
             id: insertResult.rows?.[0]?.id,
@@ -261,7 +298,7 @@ app.post("/entrada", async (req, res) => {
 });
 
 // ROTA PARA REGISTRAR SAÍDA DE VEÍCULO
-app.post("/saida", async (req, res) => {
+app.post("/saida", requireAuth, async (req, res) => {
     let { placa, valor_pago, tempo_permanencia, forma_pagamento, entryId } = req.body;
     
     if (!placa && !entryId) {
@@ -294,7 +331,13 @@ app.post("/saida", async (req, res) => {
         return result.rowCount || 0;
     };
 
-    const finalize = (targetPlaca) => {
+        const finalize = async (targetPlaca) => {
+            await logAudit('saida', {
+                placa: targetPlaca || placaNorm,
+                entry_id,
+                valor_pago: valor_pago || 0,
+                forma_pagamento: forma_pagamento || null
+            });
         return res.json({ 
             success: true,
             mensagem: "Saída registrada com sucesso",
@@ -318,14 +361,14 @@ app.post("/saida", async (req, res) => {
                     console.warn(`[BACK] Veículo não encontrado (entryId/placa): ${entry_id}/${placaNorm}`);
                     return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
                 }
-                return finalize(placaNorm);
+                    return await finalize(placaNorm);
             }
 
             if (changes === 0) {
                 console.warn(`[BACK] Veículo não encontrado para entryId: ${entry_id}`);
                 return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
             }
-            return finalize(placaNorm);
+                return await finalize(placaNorm);
         }
 
         const changes = await tryUpdate('placa = $6', placaNorm);
@@ -333,10 +376,89 @@ app.post("/saida", async (req, res) => {
             console.warn(`[BACK] Veículo não encontrado: ${placaNorm}`);
             return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
         }
-        return finalize(placaNorm);
+            return await finalize(placaNorm);
     } catch (err) {
         console.error("[BACK] Erro ao registrar saída:", err);
         return res.status(500).json({ error: "Erro ao registrar saída" });
+    }
+});
+
+// ROTA PARA LISTAR VEÍCULOS ATIVOS NO PÁTIO
+app.get("/patio/ativos", async (req, res) => {
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT
+                id,
+                entry_id,
+                placa,
+                marca,
+                modelo,
+                cor,
+                mensalista,
+                diarista,
+                cliente_nome,
+                cliente_telefone,
+                cliente_cpf,
+                TO_CHAR(data_entrada, 'YYYY-MM-DD') as data_entrada_iso,
+                TO_CHAR(hora_entrada, 'HH24:MI:SS') as hora_entrada_iso,
+                status,
+                criado_em
+             FROM historico
+             WHERE status = 'ativo'
+             ORDER BY criado_em DESC`,
+            []
+        );
+        res.json({ success: true, dados: result.rows || [] });
+    } catch (err) {
+        console.error('[BACK] Erro ao listar pátio:', err);
+        return res.status(500).json({ error: 'Erro ao listar pátio' });
+    }
+});
+
+// ROTA PARA OBTER VEÍCULO ATIVO POR entryId/placa
+app.get("/patio/ativo", async (req, res) => {
+    const { entryId, placa } = req.query;
+    const placaNorm = placa ? sanitizePlate(placa) : null;
+
+    if (!entryId && !placaNorm) {
+        return res.status(400).json({ error: 'entryId ou placa é obrigatório' });
+    }
+
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT
+                id,
+                entry_id,
+                placa,
+                marca,
+                modelo,
+                cor,
+                mensalista,
+                diarista,
+                cliente_nome,
+                cliente_telefone,
+                cliente_cpf,
+                TO_CHAR(data_entrada, 'YYYY-MM-DD') as data_entrada_iso,
+                TO_CHAR(hora_entrada, 'HH24:MI:SS') as hora_entrada_iso,
+                status,
+                criado_em
+             FROM historico
+             WHERE status = 'ativo'
+               AND (entry_id = $1 OR placa = $2)
+             ORDER BY criado_em DESC
+             LIMIT 1`,
+            [entryId || '', placaNorm || '']
+        );
+        const row = result.rows?.[0];
+        if (!row) {
+            return res.status(404).json({ error: 'Entrada ativa não encontrada' });
+        }
+        res.json({ success: true, dados: row });
+    } catch (err) {
+        console.error('[BACK] Erro ao buscar entrada ativa:', err);
+        return res.status(500).json({ error: 'Erro ao buscar entrada ativa' });
     }
 });
 
@@ -633,7 +755,7 @@ app.get("/configuracoes/:chave", async (req, res) => {
 });
 
 // ROTA PARA ATUALIZAR CONFIGURAÇÕES
-app.put("/configuracoes", async (req, res) => {
+app.put("/configuracoes", requireAuth, async (req, res) => {
     const configuracoes = req.body;
     
     if (!configuracoes || typeof configuracoes !== 'object') {
@@ -676,6 +798,8 @@ app.put("/configuracoes", async (req, res) => {
             });
         }
 
+        await logAudit('configuracoes_update', { chaves });
+
         return res.json({ 
             success: true, 
             mensagem: "Configurações atualizadas com sucesso" 
@@ -683,6 +807,235 @@ app.put("/configuracoes", async (req, res) => {
     } catch (err) {
         console.error("[BACK] Erro ao atualizar configurações:", err);
         return res.status(500).json({ error: "Erro ao atualizar configurações" });
+    }
+});
+
+// ROTAS DE MENSALISTAS
+app.get("/mensalistas", async (req, res) => {
+    const { q, status } = req.query;
+    let queryText = `SELECT * FROM mensalistas WHERE 1=1`;
+    const params = [];
+    const addParam = (val) => {
+        params.push(val);
+        return `$${params.length}`;
+    };
+
+    if (status === 'ativo') {
+        queryText += ` AND ativo = ${addParam(true)}`;
+    } else if (status === 'inativo') {
+        queryText += ` AND ativo = ${addParam(false)}`;
+    }
+
+    if (q) {
+        const like = `%${q}%`;
+        queryText += ` AND (placa ILIKE ${addParam(like)} OR nome ILIKE ${addParam(like)} OR cpf ILIKE ${addParam(like)})`;
+    }
+
+    queryText += ` ORDER BY atualizado_em DESC`;
+
+    try {
+        await dbReady;
+        const result = await query(queryText, params);
+        res.json({ success: true, dados: result.rows || [] });
+    } catch (err) {
+        console.error('[BACK] Erro ao listar mensalistas:', err);
+        return res.status(500).json({ error: 'Erro ao listar mensalistas' });
+    }
+});
+
+app.get("/mensalistas/:placa", async (req, res) => {
+    const placa = sanitizePlate(req.params.placa);
+    try {
+        await dbReady;
+        const result = await query(`SELECT * FROM mensalistas WHERE placa = $1`, [placa]);
+        const row = result.rows?.[0];
+        if (!row) return res.status(404).json({ error: 'Mensalista não encontrado' });
+        res.json({ success: true, dados: row });
+    } catch (err) {
+        console.error('[BACK] Erro ao buscar mensalista:', err);
+        return res.status(500).json({ error: 'Erro ao buscar mensalista' });
+    }
+});
+
+app.post("/mensalistas", requireAuth, async (req, res) => {
+    const { placa, nome, telefone, cpf, vencimento, ativo } = req.body || {};
+    const placaNorm = sanitizePlate(placa);
+    if (!placaNorm || !nome) return res.status(400).json({ error: 'Placa e nome são obrigatórios' });
+
+    try {
+        await dbReady;
+        const result = await query(
+            `INSERT INTO mensalistas (placa, nome, telefone, cpf, vencimento, ativo)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (placa) DO UPDATE SET
+                nome = EXCLUDED.nome,
+                telefone = EXCLUDED.telefone,
+                cpf = EXCLUDED.cpf,
+                vencimento = EXCLUDED.vencimento,
+                ativo = EXCLUDED.ativo,
+                atualizado_em = NOW()
+             RETURNING *`,
+            [placaNorm, nome, telefone || null, cpf || null, vencimento || null, ativo !== false]
+        );
+        await logAudit('mensalista_upsert', { placa: placaNorm, nome });
+        res.json({ success: true, dados: result.rows?.[0] });
+    } catch (err) {
+        console.error('[BACK] Erro ao salvar mensalista:', err);
+        return res.status(500).json({ error: 'Erro ao salvar mensalista' });
+    }
+});
+
+app.put("/mensalistas/:id", requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const { nome, telefone, cpf, vencimento, ativo } = req.body || {};
+    if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+
+    try {
+        await dbReady;
+        const result = await query(
+            `UPDATE mensalistas
+             SET nome = $1,
+                 telefone = $2,
+                 cpf = $3,
+                 vencimento = $4,
+                 ativo = $5,
+                 atualizado_em = NOW()
+             WHERE id = $6
+             RETURNING *`,
+            [nome, telefone || null, cpf || null, vencimento || null, ativo !== false, id]
+        );
+        if (!result.rows?.[0]) return res.status(404).json({ error: 'Mensalista não encontrado' });
+        await logAudit('mensalista_update', { id, nome });
+        res.json({ success: true, dados: result.rows?.[0] });
+    } catch (err) {
+        console.error('[BACK] Erro ao atualizar mensalista:', err);
+        return res.status(500).json({ error: 'Erro ao atualizar mensalista' });
+    }
+});
+
+app.patch("/mensalistas/:id/status", requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const { ativo } = req.body || {};
+    try {
+        await dbReady;
+        const result = await query(
+            `UPDATE mensalistas SET ativo = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
+            [Boolean(ativo), id]
+        );
+        if (!result.rows?.[0]) return res.status(404).json({ error: 'Mensalista não encontrado' });
+        await logAudit('mensalista_status', { id, ativo: Boolean(ativo) });
+        res.json({ success: true, dados: result.rows?.[0] });
+    } catch (err) {
+        console.error('[BACK] Erro ao atualizar status do mensalista:', err);
+        return res.status(500).json({ error: 'Erro ao atualizar status do mensalista' });
+    }
+});
+
+// AUDITORIA
+app.get("/auditoria", requireAuth, async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit || '100', 10) || 100, 500);
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT id, acao, detalhes, criado_em FROM auditoria ORDER BY criado_em DESC LIMIT $1`,
+            [limit]
+        );
+        res.json({ success: true, dados: result.rows || [] });
+    } catch (err) {
+        console.error('[BACK] Erro ao listar auditoria:', err);
+        return res.status(500).json({ error: 'Erro ao listar auditoria' });
+    }
+});
+
+// BACKUP / RESTORE
+app.get("/backup", requireAuth, async (req, res) => {
+    try {
+        await dbReady;
+        const historico = await query(`SELECT * FROM historico`, []);
+        const configuracoes = await query(`SELECT * FROM configuracoes`, []);
+        const mensalistas = await query(`SELECT * FROM mensalistas`, []);
+        const payload = {
+            historico: historico.rows || [],
+            configuracoes: configuracoes.rows || [],
+            mensalistas: mensalistas.rows || []
+        };
+        await logAudit('backup_export', { total_historico: payload.historico.length });
+        res.json({ success: true, dados: payload });
+    } catch (err) {
+        console.error('[BACK] Erro ao gerar backup:', err);
+        return res.status(500).json({ error: 'Erro ao gerar backup' });
+    }
+});
+
+app.post("/restore", requireAuth, async (req, res) => {
+    const { historico = [], configuracoes = [], mensalistas = [] } = req.body || {};
+    try {
+        await dbReady;
+        await tx(async (client) => {
+            await client.query('DELETE FROM historico');
+            await client.query('DELETE FROM configuracoes');
+            await client.query('DELETE FROM mensalistas');
+
+            for (const row of configuracoes) {
+                await client.query(
+                    `INSERT INTO configuracoes (id, chave, valor, descricao, atualizado_em)
+                     VALUES ($1, $2, $3, $4, $5)
+                     ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, descricao = EXCLUDED.descricao, atualizado_em = EXCLUDED.atualizado_em`,
+                    [row.id || null, row.chave, row.valor, row.descricao || null, row.atualizado_em || new Date().toISOString()]
+                );
+            }
+
+            for (const row of mensalistas) {
+                await client.query(
+                    `INSERT INTO mensalistas (id, placa, nome, telefone, cpf, vencimento, ativo, criado_em, atualizado_em)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                     ON CONFLICT (placa) DO UPDATE SET
+                        nome = EXCLUDED.nome,
+                        telefone = EXCLUDED.telefone,
+                        cpf = EXCLUDED.cpf,
+                        vencimento = EXCLUDED.vencimento,
+                        ativo = EXCLUDED.ativo,
+                        atualizado_em = EXCLUDED.atualizado_em`,
+                    [row.id || null, row.placa, row.nome, row.telefone || null, row.cpf || null, row.vencimento || null, row.ativo !== false, row.criado_em || new Date().toISOString(), row.atualizado_em || new Date().toISOString()]
+                );
+            }
+
+            for (const row of historico) {
+                await client.query(
+                    `INSERT INTO historico (
+                        id, entry_id, placa, marca, modelo, cor, mensalista, diarista, cliente_nome, cliente_telefone, cliente_cpf,
+                        data_entrada, hora_entrada, data_saida, hora_saida, tempo_permanencia, valor_pago, forma_pagamento, status, criado_em
+                     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+                    [
+                        row.id || null,
+                        row.entry_id || null,
+                        row.placa,
+                        row.marca || '',
+                        row.modelo || '',
+                        row.cor || '',
+                        row.mensalista === true,
+                        row.diarista === true,
+                        row.cliente_nome || null,
+                        row.cliente_telefone || null,
+                        row.cliente_cpf || null,
+                        row.data_entrada || null,
+                        row.hora_entrada || null,
+                        row.data_saida || null,
+                        row.hora_saida || null,
+                        row.tempo_permanencia || null,
+                        row.valor_pago || 0,
+                        row.forma_pagamento || null,
+                        row.status || 'ativo',
+                        row.criado_em || new Date().toISOString()
+                    ]
+                );
+            }
+        });
+        await logAudit('backup_restore', { total_historico: historico.length });
+        res.json({ success: true, mensagem: 'Restore concluído' });
+    } catch (err) {
+        console.error('[BACK] Erro ao restaurar backup:', err);
+        return res.status(500).json({ error: 'Erro ao restaurar backup' });
     }
 });
 

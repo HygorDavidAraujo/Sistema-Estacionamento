@@ -1,6 +1,6 @@
 (function() {
     const STORAGE_KEY = 'parkingEntries';
-    const IGNORE_KEYS = new Set(['valorHora', 'valorHoraAdicional', 'toleranciaHoraAdicional', 'vehicleDB', STORAGE_KEY, 'totalVagas', 'valorMensalidade', 'valorDiaria']);
+    const IGNORE_KEYS = new Set(['valorHora', 'valorHoraAdicional', 'toleranciaHoraAdicional', 'vehicleDB', STORAGE_KEY, 'totalVagas', 'valorMensalidade', 'valorDiaria', 'adminToken']);
 
     const normalizePlaca = (p) => (p || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
@@ -55,6 +55,16 @@
         persist(entries);
         mirrorLegacy(normalizedEntry);
         return normalizedEntry;
+    }
+
+    function upsertEntry(entry) {
+        return saveEntry(entry);
+    }
+
+    function replaceEntries(entries = []) {
+        const normalized = entries.map((entry) => ({ ...entry, placa: normalizePlaca(entry.placa) }));
+        persist(normalized);
+        normalized.forEach(mirrorLegacy);
     }
 
     function removeEntry(entryId) {
@@ -133,6 +143,8 @@
     window.StorageService = {
         generateEntryId,
         saveEntry,
+        upsertEntry,
+        replaceEntries,
         removeEntry,
         getEntryByPlate,
         getEntryById,
