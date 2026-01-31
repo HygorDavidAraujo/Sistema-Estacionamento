@@ -654,6 +654,49 @@ app.get("/historico/:placa", async (req, res) => {
     }
 });
 
+// ROTA PARA OBTER DASHBOARD DE CAIXA
+app.get("/caixa/dashboard", async (req, res) => {
+    const hoje = formatDateLocal(new Date());
+
+    try {
+        await dbReady;
+        const result = await query(
+            `WITH movimentos AS (
+                SELECT data_saida AS data_ref, forma_pagamento, valor_pago
+                FROM historico h
+                WHERE status = 'saído'
+                  AND data_saida = $1
+                  AND NOT EXISTS (
+                    SELECT 1 FROM caixa_movimentos cm
+                    WHERE cm.origem = 'saida' AND cm.historico_id = h.id
+                  )
+                UNION ALL
+                SELECT data_pagamento AS data_ref, forma_pagamento, valor_pago
+                FROM caixa_movimentos
+                WHERE data_pagamento = $1
+            )
+            SELECT 
+                COALESCE(SUM(valor_pago), 0) as total_recebido,
+                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%dinheiro%' THEN valor_pago ELSE 0 END), 0) as total_dinheiro,
+                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%credito%' OR lower(forma_pagamento) LIKE '%crédito%' THEN valor_pago ELSE 0 END), 0) as total_credito,
+                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%debito%' OR lower(forma_pagamento) LIKE '%débito%' THEN valor_pago ELSE 0 END), 0) as total_debito,
+                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%pix%' THEN valor_pago ELSE 0 END), 0) as total_pix,
+                COUNT(CASE WHEN valor_pago > 0 THEN 1 END) as total_transacoes
+             FROM movimentos`,
+            [hoje]
+        );
+        res.json({ success: true, dados: result.rows?.[0] || {} });
+    } catch (err) {
+        console.error("[BACK] Erro ao gerar dashboard de caixa:", err);
+        return res.status(500).json({ error: "Erro ao gerar dashboard de caixa" });
+    }
+});
+
+app.get("/api/caixa/dashboard", async (req, res) => {
+    req.url = '/caixa/dashboard';
+    return app.handle(req, res);
+});
+
 // ROTA PARA RELATÓRIO DE CAIXA POR PERÍODO
 app.get("/caixa/relatorio", async (req, res) => {
     const dataInicio = normalizeDateParam(req.query.dataInicio);
@@ -704,6 +747,11 @@ app.get("/caixa/relatorio", async (req, res) => {
         console.error("[BACK] Erro ao gerar relatório de caixa:", err);
         return res.status(500).json({ error: "Erro ao gerar relatório de caixa" });
     }
+});
+
+app.get("/api/caixa/relatorio", async (req, res) => {
+    req.url = '/caixa/relatorio';
+    return app.handle(req, res);
 });
 
 // ROTA PARA OBTER DASHBOARD DE VAGAS
