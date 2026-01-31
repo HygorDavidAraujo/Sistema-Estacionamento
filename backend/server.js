@@ -19,6 +19,17 @@ app.use((req, _res, next) => {
     next();
 });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
+function normalizeDateParam(value) {
+    if (!value) return null;
+    const str = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    const brMatch = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (brMatch) {
+        const [, dd, mm, yyyy] = brMatch;
+        return `${yyyy}-${mm}-${dd}`;
+    }
+    return str;
+}
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 
@@ -651,7 +662,8 @@ app.get("/caixa/dashboard", async (req, res) => {
 
 // ROTA PARA RELATÓRIO DE CAIXA POR PERÍODO
 app.get("/caixa/relatorio", async (req, res) => {
-    const { dataInicio, dataFim } = req.query;
+    const dataInicio = normalizeDateParam(req.query.dataInicio);
+    const dataFim = normalizeDateParam(req.query.dataFim);
     
     let sql = `
         SELECT 
