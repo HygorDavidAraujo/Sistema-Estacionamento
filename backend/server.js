@@ -466,7 +466,7 @@ app.get("/patio/ativo", async (req, res) => {
 app.get("/historico", async (req, res) => {
     const { dataInicio, dataFim, dia, mes, ano, tipo } = req.query;
     
-    let query = `
+    let sql = `
         SELECT
             id,
             entry_id,
@@ -498,38 +498,38 @@ app.get("/historico", async (req, res) => {
     
     // Filtro por período (data início e fim)
     if (dataInicio && dataFim) {
-        query += ` AND data_entrada BETWEEN ${addParam(dataInicio)} AND ${addParam(dataFim)}`;
+        sql += ` AND data_entrada BETWEEN ${addParam(dataInicio)} AND ${addParam(dataFim)}`;
     }
     // Filtro por dia, mês e ano
     else if (dia && mes && ano) {
-        query += ` AND EXTRACT(DAY FROM data_entrada) = ${addParam(parseInt(dia, 10))} AND EXTRACT(MONTH FROM data_entrada) = ${addParam(parseInt(mes, 10))} AND EXTRACT(YEAR FROM data_entrada) = ${addParam(parseInt(ano, 10))}`;
+        sql += ` AND EXTRACT(DAY FROM data_entrada) = ${addParam(parseInt(dia, 10))} AND EXTRACT(MONTH FROM data_entrada) = ${addParam(parseInt(mes, 10))} AND EXTRACT(YEAR FROM data_entrada) = ${addParam(parseInt(ano, 10))}`;
     }
     // Filtro por mês e ano
     else if (mes && ano) {
-        query += ` AND EXTRACT(MONTH FROM data_entrada) = ${addParam(parseInt(mes, 10))} AND EXTRACT(YEAR FROM data_entrada) = ${addParam(parseInt(ano, 10))}`;
+        sql += ` AND EXTRACT(MONTH FROM data_entrada) = ${addParam(parseInt(mes, 10))} AND EXTRACT(YEAR FROM data_entrada) = ${addParam(parseInt(ano, 10))}`;
     }
     // Filtro apenas por ano
     else if (ano) {
-        query += ` AND EXTRACT(YEAR FROM data_entrada) = ${addParam(parseInt(ano, 10))}`;
+        sql += ` AND EXTRACT(YEAR FROM data_entrada) = ${addParam(parseInt(ano, 10))}`;
     }
     // Filtro apenas por dia (todos os meses/anos)
     else if (dia) {
-        query += ` AND EXTRACT(DAY FROM data_entrada) = ${addParam(parseInt(dia, 10))}`;
+        sql += ` AND EXTRACT(DAY FROM data_entrada) = ${addParam(parseInt(dia, 10))}`;
     }
 
     if (tipo === 'mensalista') {
-        query += ` AND mensalista = ${addParam(true)}`;
+        sql += ` AND mensalista = ${addParam(true)}`;
     } else if (tipo === 'diarista') {
-        query += ` AND diarista = ${addParam(true)}`;
+        sql += ` AND diarista = ${addParam(true)}`;
     } else if (tipo === 'avulso') {
-        query += ` AND mensalista = false AND diarista = false`;
+        sql += ` AND mensalista = false AND diarista = false`;
     }
     
-    query += ` ORDER BY criado_em DESC`;
+    sql += ` ORDER BY criado_em DESC`;
     
     try {
         await dbReady;
-        const result = await query(query, params);
+        const result = await query(sql, params);
         res.json({ success: true, dados: result.rows || [] });
     } catch (err) {
         console.error("[BACK] Erro ao buscar histórico:", err);
@@ -638,7 +638,7 @@ app.get("/caixa/dashboard", async (req, res) => {
 app.get("/caixa/relatorio", async (req, res) => {
     const { dataInicio, dataFim } = req.query;
     
-    let query = `
+    let sql = `
         SELECT 
             TO_CHAR(data_saida, 'DD/MM/YYYY') as data_saida,
             forma_pagamento,
@@ -651,21 +651,21 @@ app.get("/caixa/relatorio", async (req, res) => {
     let params = [];
     
     if (dataInicio && dataFim) {
-        query += ` AND data_saida BETWEEN $1 AND $2`;
+        sql += ` AND data_saida BETWEEN $1 AND $2`;
         params.push(dataInicio, dataFim);
     } else if (dataInicio) {
-        query += ` AND data_saida >= $1`;
+        sql += ` AND data_saida >= $1`;
         params.push(dataInicio);
     } else if (dataFim) {
-        query += ` AND data_saida <= $1`;
+        sql += ` AND data_saida <= $1`;
         params.push(dataFim);
     }
     
-    query += ` GROUP BY data_saida, forma_pagamento ORDER BY data_saida DESC, forma_pagamento`;
+    sql += ` GROUP BY data_saida, forma_pagamento ORDER BY data_saida DESC, forma_pagamento`;
     
     try {
         await dbReady;
-        const result = await query(query, params);
+        const result = await query(sql, params);
         res.json({ success: true, dados: result.rows || [] });
     } catch (err) {
         console.error("[BACK] Erro ao gerar relatório de caixa:", err);
