@@ -1207,8 +1207,8 @@ function carregarRelatorioResumo() {
                 <p><b>Total de Saídas:</b> ${r.total_saidas || 0}</p>
                 <p><b>Veículos Únicos:</b> ${r.total_veiculos_unicos || 0}</p>
                 <hr>
-                <p><b>Receita Total:</b> R$ ${(r.receita_total || 0).toFixed(2)}</p>
-                <p><b>Valor Médio por Saída:</b> R$ ${(r.valor_medio || 0).toFixed(2)}</p>
+                <p><b>Receita Total:</b> R$ ${Number(r.receita_total || 0).toFixed(2)}</p>
+                <p><b>Valor Médio por Saída:</b> R$ ${Number(r.valor_medio || 0).toFixed(2)}</p>
             `;
         })
         .catch(err => {
@@ -1248,7 +1248,7 @@ function carregarHistoricoCompleto(filtros = {}) {
                     <td>${row.data_entrada} ${row.hora_entrada}</td>
                     <td>${row.data_saida || '-'} ${row.hora_saida || '-'}</td>
                     <td>${row.tempo_permanencia || '-'}</td>
-                    <td>R$ ${(row.valor_pago || 0).toFixed(2)}</td>
+                    <td>R$ ${Number(row.valor_pago || 0).toFixed(2)}</td>
                     <td>${row.status}</td>
                 </tr>`;
             });
