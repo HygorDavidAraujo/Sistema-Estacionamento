@@ -104,9 +104,17 @@ function normalizePaymentMethod(value) {
 }
 
 function addMonthsToISODate(baseDateStr, months) {
-    const [y, m, d] = String(baseDateStr).split('-').map(Number);
-    const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
-    dt.setUTCMonth(dt.getUTCMonth() + months);
+    const safeBase = typeof baseDateStr === 'string' ? baseDateStr : '';
+    const parts = safeBase.split('-').map(Number);
+    const y = parts[0];
+    const m = parts[1];
+    const d = parts[2];
+    let dt = new Date(Date.UTC(y || 0, (m || 1) - 1, d || 1));
+    if (Number.isNaN(dt.getTime())) {
+        const now = new Date();
+        dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    }
+    dt.setUTCMonth(dt.getUTCMonth() + (Number(months) || 0));
     return dt.toISOString().slice(0, 10);
 }
 
