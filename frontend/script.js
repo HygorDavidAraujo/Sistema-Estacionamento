@@ -1457,16 +1457,18 @@ async function gerarRelatorioCaixa() {
             if (!porData[item.data_saida]) {
                 porData[item.data_saida] = { total: 0, formas: {} };
             }
-            porData[item.data_saida].total += item.total;
+            const itemTotal = Number(item.total || 0);
+            const itemQtd = Number(item.quantidade || 0);
+            porData[item.data_saida].total += itemTotal;
             porData[item.data_saida].formas[item.forma_pagamento] = item;
-            
-            totalGeral += item.total;
-            totalTransacoes += item.quantidade;
-            
-            if (item.forma_pagamento === 'Dinheiro') totalDinheiro += item.total;
-            if (item.forma_pagamento === 'Cartão de Crédito') totalCredito += item.total;
-            if (item.forma_pagamento === 'Cartão de Débito') totalDebito += item.total;
-            if (item.forma_pagamento === 'Pix') totalPix += item.total;
+
+            totalGeral += itemTotal;
+            totalTransacoes += itemQtd;
+
+            if (item.forma_pagamento === 'Dinheiro') totalDinheiro += itemTotal;
+            if (item.forma_pagamento === 'Cartão de Crédito') totalCredito += itemTotal;
+            if (item.forma_pagamento === 'Cartão de Débito') totalDebito += itemTotal;
+            if (item.forma_pagamento === 'Pix') totalPix += itemTotal;
         });
         
         // Gera HTML do relatório
