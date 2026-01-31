@@ -61,6 +61,17 @@ export async function initDb() {
         observacao VARCHAR(255),
         criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS origem VARCHAR(32)`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS historico_id BIGINT`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS mensalista_id BIGINT`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS placa VARCHAR(16)`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS nome VARCHAR(120)`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS valor_pago NUMERIC(10,2)`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS forma_pagamento VARCHAR(60)`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS data_pagamento DATE`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS hora_pagamento TIME`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS observacao VARCHAR(255)`);
+    await pool.query(`ALTER TABLE IF EXISTS caixa_movimentos ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_data ON caixa_movimentos(data_pagamento)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_forma ON caixa_movimentos(forma_pagamento)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_origem ON caixa_movimentos(origem)`);
