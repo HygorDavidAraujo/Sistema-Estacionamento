@@ -47,6 +47,25 @@ export async function initDb() {
         detalhes JSONB,
         criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS caixa_movimentos (
+        id BIGSERIAL PRIMARY KEY,
+        origem VARCHAR(32) NOT NULL,
+        historico_id BIGINT,
+        mensalista_id BIGINT,
+        placa VARCHAR(16),
+        nome VARCHAR(120),
+        valor_pago NUMERIC(10,2) NOT NULL,
+        forma_pagamento VARCHAR(60),
+        data_pagamento DATE NOT NULL DEFAULT CURRENT_DATE,
+        hora_pagamento TIME NOT NULL DEFAULT CURRENT_TIME,
+        observacao VARCHAR(255),
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_data ON caixa_movimentos(data_pagamento)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_forma ON caixa_movimentos(forma_pagamento)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_origem ON caixa_movimentos(origem)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_hist ON caixa_movimentos(historico_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_mensalista ON caixa_movimentos(mensalista_id)`);
     console.log("[BACK] Schema aplicado com sucesso");
 }
 

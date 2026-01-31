@@ -185,16 +185,60 @@
         
         <div id="resumoPagamento" class="resumo-pagamento"></div>
         
-        <label for="formaPagamento">Forma de Pagamento</label>
-        <select id="formaPagamento">
-            <option value="">Selecione...</option>
-            <option value="Dinheiro">💵 Dinheiro</option>
-            <option value="Cartão de Crédito">💳 Cartão de Crédito</option>
-            <option value="Cartão de Débito">💳 Cartão de Débito</option>
-            <option value="Pix">📱 Pix</option>
-        </select>
+        <div class="split-payments" id="splitPagamento">
+            <div class="split-header">
+                <span>Forma de Pagamento</span>
+                <button id="addSplitPagamento" class="btn-ghost" type="button">Adicionar forma</button>
+            </div>
+            <div id="splitPagamentoLista" class="split-list"></div>
+            <div class="split-footer">
+                <span>Total:</span>
+                <strong id="splitPagamentoTotal">R$ 0,00</strong>
+                <span>Restante:</span>
+                <strong id="splitPagamentoRestante">R$ 0,00</strong>
+            </div>
+        </div>
 
         <button id="confirmarPagamentoBtn" class="btn-primary">Confirmar Pagamento</button>
+    </div>
+</div>
+
+<!-- POPUP PAGAMENTO MENSALIDADE -->
+<div class="popup" id="mensalidadePagamentoPopup" aria-hidden="true">
+    <div class="popup-content">
+        <button class="close" data-close>&times;</button>
+        <h3>Receber Mensalidade</h3>
+
+        <div id="mensalidadeResumo" class="resumo-pagamento"></div>
+
+        <div class="mensalidade-config">
+            <label for="mensalidadeMeses">Meses</label>
+            <input id="mensalidadeMeses" type="number" min="1" value="1" />
+
+            <label for="mensalidadeValor">Valor da Mensalidade (R$)</label>
+            <input id="mensalidadeValor" type="number" step="0.01" />
+
+            <label for="mensalidadeObservacao">Observação</label>
+            <input id="mensalidadeObservacao" type="text" />
+
+            <p id="mensalidadeVencimentoEstimado" class="mensalidade-info"></p>
+        </div>
+
+        <div class="split-payments" id="splitMensalidade">
+            <div class="split-header">
+                <span>Forma de Pagamento</span>
+                <button id="addSplitMensalidade" class="btn-ghost" type="button">Adicionar forma</button>
+            </div>
+            <div id="splitMensalidadeLista" class="split-list"></div>
+            <div class="split-footer">
+                <span>Total:</span>
+                <strong id="splitMensalidadeTotal">R$ 0,00</strong>
+                <span>Restante:</span>
+                <strong id="splitMensalidadeRestante">R$ 0,00</strong>
+            </div>
+        </div>
+
+        <button id="confirmarMensalidadeBtn" class="btn-primary">Confirmar Pagamento</button>
     </div>
 </div>
 
@@ -274,6 +318,10 @@
         </div>
 
         <div id="mensalistasLista" class="historico-conteudo"></div>
+        <div class="mensalidade-historico">
+            <h4>Histórico de Mensalidades</h4>
+            <div id="mensalidadeHistoricoConteudo" class="historico-conteudo"></div>
+        </div>
     </div>
 </div>
 

@@ -127,6 +127,119 @@ function getEntryPricing(entry, horaSaida = new Date()) {
 }
 
 ///////////////////////////
+// split pagamento
+///////////////////////////
+const PAYMENT_OPTIONS = [
+    { value: 'Dinheiro', label: '💵 Dinheiro' },
+    { value: 'Cartão de Crédito', label: '💳 Cartão de Crédito' },
+    { value: 'Cartão de Débito', label: '💳 Cartão de Débito' },
+    { value: 'Pix', label: '📱 Pix' }
+];
+
+function buildFormaOptions(selectedValue = '') {
+    const options = ['<option value="">Selecione...</option>'];
+    PAYMENT_OPTIONS.forEach((opt) => {
+        const selected = opt.value === selectedValue ? 'selected' : '';
+        options.push(`<option value="${opt.value}" ${selected}>${opt.label}</option>`);
+    });
+    return options.join('');
+}
+
+function formatCurrency(value) {
+    const num = Number(value || 0);
+    return `R$ ${num.toFixed(2)}`;
+}
+
+function addSplitRow(listEl, { forma = '', valor = 0 } = {}) {
+    const row = document.createElement('div');
+    row.className = 'split-row';
+    row.innerHTML = `
+        <select class="split-forma">${buildFormaOptions(forma)}</select>
+        <input type="number" class="split-valor" step="0.01" min="0" value="${Number(valor || 0).toFixed(2)}" />
+        <button type="button" class="btn-ghost split-remove">✖</button>
+    `;
+    listEl.appendChild(row);
+}
+
+function getSplitPayments(listId) {
+    const listEl = document.getElementById(listId);
+    if (!listEl) return [];
+    const rows = Array.from(listEl.querySelectorAll('.split-row'));
+    return rows
+        .map((row) => {
+            const forma = row.querySelector('.split-forma')?.value;
+            const valor = Number(row.querySelector('.split-valor')?.value || 0);
+            return { forma_pagamento: forma, valor_pago: valor };
+        })
+        .filter((p) => p.forma_pagamento && p.valor_pago > 0);
+}
+
+function updateSplitSummary(listId, totalId, remainingId, totalValue) {
+    const totalEl = document.getElementById(totalId);
+    const remainingEl = document.getElementById(remainingId);
+    const payments = getSplitPayments(listId);
+    const sum = payments.reduce((acc, cur) => acc + cur.valor_pago, 0);
+    const remaining = Math.max(0, Number(totalValue || 0) - sum);
+    if (totalEl) totalEl.textContent = formatCurrency(totalValue);
+    if (remainingEl) remainingEl.textContent = formatCurrency(remaining);
+}
+
+function resetSplitUI(listId, totalId, remainingId, totalValue) {
+    const listEl = document.getElementById(listId);
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    addSplitRow(listEl, { valor: Number(totalValue || 0) });
+    updateSplitSummary(listId, totalId, remainingId, totalValue);
+}
+
+function initSplitHandlers({ listId, totalId, remainingId, addBtnId, totalProvider }) {
+    const listEl = document.getElementById(listId);
+    const addBtn = document.getElementById(addBtnId);
+    if (!listEl || !addBtn) return;
+
+    const update = () => updateSplitSummary(listId, totalId, remainingId, totalProvider());
+
+    addBtn.addEventListener('click', () => {
+        const total = totalProvider();
+        const existing = getSplitPayments(listId).reduce((acc, cur) => acc + cur.valor_pago, 0);
+        const remaining = Math.max(0, Number(total || 0) - existing);
+        addSplitRow(listEl, { valor: remaining });
+        update();
+    });
+
+    listEl.addEventListener('click', (e) => {
+        const target = e.target;
+        if (target?.classList?.contains('split-remove')) {
+            target.closest('.split-row')?.remove();
+            update();
+        }
+    });
+
+    listEl.addEventListener('input', update);
+    listEl.addEventListener('change', update);
+
+    update();
+}
+
+function validateSplitTotal(expectedTotal, payments) {
+    const total = payments.reduce((acc, cur) => acc + cur.valor_pago, 0);
+    return Math.abs(Number(expectedTotal || 0) - total) < 0.01;
+}
+
+function addMonthsToISODateFront(baseDateStr, months) {
+    const [y, m, d] = String(baseDateStr).split('-').map(Number);
+    const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+    dt.setUTCMonth(dt.getUTCMonth() + months);
+    return dt.toISOString().slice(0, 10);
+}
+
+function formatBrDate(isoDate) {
+    if (!isoDate) return '-';
+    const [y, m, d] = String(isoDate).split('-');
+    return `${d}/${m}/${y}`;
+}
+
+///////////////////////////
 // backend consulta (via backend com API gratuita)
 ///////////////////////////
 async function consultarPlacaAPI(placa) {
@@ -407,11 +520,31 @@ function bindUI() {
     document.getElementById('btnRelatoriosCaixa')?.addEventListener('click', () => openPopup('relatoriosCaixaPopup'));
     document.getElementById('btnGerarRelatorioCaixa')?.addEventListener('click', gerarRelatorioCaixa);
     document.getElementById('confirmarPagamentoBtn')?.addEventListener('click', confirmarPagamento);
+    document.getElementById('confirmarMensalidadeBtn')?.addEventListener('click', confirmarPagamentoMensalidade);
+
+    initSplitHandlers({
+        listId: 'splitPagamentoLista',
+        totalId: 'splitPagamentoTotal',
+        remainingId: 'splitPagamentoRestante',
+        addBtnId: 'addSplitPagamento',
+        totalProvider: () => Number(window.dadosPagamento?.valor || 0)
+    });
+
+    initSplitHandlers({
+        listId: 'splitMensalidadeLista',
+        totalId: 'splitMensalidadeTotal',
+        remainingId: 'splitMensalidadeRestante',
+        addBtnId: 'addSplitMensalidade',
+        totalProvider: () => getMensalidadeTotal()
+    });
 
     document.getElementById('btnBuscarMensalistas')?.addEventListener('click', carregarMensalistas);
     document.getElementById('btnNovoMensalista')?.addEventListener('click', limparFormMensalista);
     document.getElementById('btnSalvarMensalista')?.addEventListener('click', salvarMensalista);
     document.getElementById('btnLimparMensalista')?.addEventListener('click', limparFormMensalista);
+
+    document.getElementById('mensalidadeMeses')?.addEventListener('input', atualizarResumoMensalidade);
+    document.getElementById('mensalidadeValor')?.addEventListener('input', atualizarResumoMensalidade);
 
     document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', e => closePopupByElement(e.target.closest('.popup'))));
 
@@ -843,9 +976,10 @@ function prepararPagamento(entry) {
     closePopup('saidaPopup');
 
     if (total > 0) {
+        resetSplitUI('splitPagamentoLista', 'splitPagamentoTotal', 'splitPagamentoRestante', total);
         openPopup('pagamentoPopup');
     } else {
-        processarSaida(null);
+        processarSaida([]);
     }
 }
 
@@ -866,20 +1000,26 @@ async function calcularPermanencia() {
 // confirmar pagamento
 ///////////////////////////
 function confirmarPagamento() {
-    const formaPagamento = document.getElementById('formaPagamento').value;
-    
-    if (!formaPagamento) {
+    const total = Number(window.dadosPagamento?.valor || 0);
+    const pagamentos = getSplitPayments('splitPagamentoLista');
+
+    if (pagamentos.length === 0) {
         alert('Selecione a forma de pagamento');
         return;
     }
-    
-    processarSaida(formaPagamento);
+
+    if (!validateSplitTotal(total, pagamentos)) {
+        alert('A soma das formas de pagamento precisa fechar o total da saída');
+        return;
+    }
+
+    processarSaida(pagamentos);
 }
 
 ///////////////////////////
 // processar saída (após pagamento)
 ///////////////////////////
-function processarSaida(formaPagamento) {
+function processarSaida(pagamentos = []) {
     const dados = window.dadosPagamento;
     
     if (!dados) {
@@ -888,6 +1028,9 @@ function processarSaida(formaPagamento) {
     }
     
     // Registra saída no backend
+    const pagamentosValidos = Array.isArray(pagamentos) ? pagamentos.filter(p => p.forma_pagamento && Number(p.valor_pago) > 0) : [];
+    const formaPagamento = pagamentosValidos.length === 1 ? pagamentosValidos[0].forma_pagamento : (pagamentosValidos.length > 1 ? 'Múltiplo' : null);
+
     apiFetch(`${BACKEND_BASE}/saida`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -896,7 +1039,8 @@ function processarSaida(formaPagamento) {
             entryId: dados.entryId,
             valor_pago: dados.valor, 
             tempo_permanencia: dados.tempo,
-            forma_pagamento: formaPagamento
+            forma_pagamento: formaPagamento,
+            pagamentos: pagamentosValidos
         })
     })
     .then(res => res.json())
@@ -910,6 +1054,10 @@ function processarSaida(formaPagamento) {
         StorageService.removeEntry(dados.entryId);
         
         // Gera comprovante
+        const pagamentosHtml = pagamentosValidos.length
+            ? `<p><b>Forma de Pagamento:</b> ${formaPagamento}</p>${pagamentosValidos.length > 1 ? `<ul>${pagamentosValidos.map(p => `<li>${p.forma_pagamento} - ${formatCurrency(p.valor_pago)}</li>`).join('')}</ul>` : ''}`
+            : '';
+
         document.getElementById('comprovantePermanencia').innerHTML = `
             <h3>✅ Comprovante de Saída</h3>
             <p><b>ID da Entrada:</b> ${dados.entryId}</p>
@@ -920,7 +1068,7 @@ function processarSaida(formaPagamento) {
             <p><b>Tempo:</b> ${dados.tempo}</p>
             <p><b>Tipo:</b> ${dados.tipo === 'mensalista' ? 'Mensalista' : dados.tipo === 'diarista' ? 'Diária' : 'Avulso'}</p>
             <p><b>Valor:</b> R$ ${Number(dados.valor).toFixed(2)}</p>
-            ${formaPagamento ? `<p><b>Forma de Pagamento:</b> ${formaPagamento}</p>` : ''}
+            ${pagamentosHtml}
             <p style="margin-top:20px;font-size:12px;color:#666;">Obrigado pela preferência!</p>
         `;
         
@@ -930,7 +1078,7 @@ function processarSaida(formaPagamento) {
         
         // Limpa formulários
         document.getElementById('placaSaida').value = '';
-        document.getElementById('formaPagamento').value = '';
+        resetSplitUI('splitPagamentoLista', 'splitPagamentoTotal', 'splitPagamentoRestante', 0);
         
         // Atualiza dashboards
         updatePatioCarList();
@@ -1178,6 +1326,7 @@ async function carregarMensalistas() {
 function renderMensalistas(lista) {
     if (!lista || lista.length === 0) {
         document.getElementById('mensalistasLista').innerHTML = '<p>Nenhum mensalista cadastrado.</p>';
+        document.getElementById('mensalidadeHistoricoConteudo').innerHTML = '<p>Selecione um mensalista para ver o histórico.</p>';
         return;
     }
 
@@ -1192,6 +1341,8 @@ function renderMensalistas(lista) {
             <td>${row.ativo === false ? 'Inativo' : 'Ativo'}</td>
             <td>
                 <button class="btn-ghost" data-edit-id="${row.id}">Editar</button>
+                <button class="btn-ghost" data-history-id="${row.id}">Histórico</button>
+                ${row.ativo === false ? '' : `<button class="btn-ghost" data-pay-id="${row.id}">Receber</button>`}
             </td>
         </tr>`;
     });
@@ -1205,6 +1356,163 @@ function renderMensalistas(lista) {
             if (row) preencherFormMensalista(row);
         });
     });
+
+    document.querySelectorAll('#mensalistasLista [data-pay-id]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-pay-id');
+            const row = lista.find(r => String(r.id) === String(id));
+            if (row) abrirPagamentoMensalidade(row);
+        });
+    });
+
+    document.querySelectorAll('#mensalistasLista [data-history-id]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-history-id');
+            const row = lista.find(r => String(r.id) === String(id));
+            if (row) carregarHistoricoMensalidade(row);
+        });
+    });
+}
+
+async function carregarHistoricoMensalidade(row) {
+    const container = document.getElementById('mensalidadeHistoricoConteudo');
+    if (!container) return;
+    container.innerHTML = '<p>Carregando histórico...</p>';
+
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/mensalistas/${row.id}/pagamentos?limit=100`);
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Erro ao carregar histórico');
+
+        const lista = data.dados || [];
+        if (lista.length === 0) {
+            container.innerHTML = '<p>Nenhum pagamento registrado para este mensalista.</p>';
+            return;
+        }
+
+        let html = `<h5>${row.nome} - ${row.placa}</h5>`;
+        html += '<table><tr><th>Data</th><th>Hora</th><th>Forma</th><th>Valor</th><th>Obs.</th></tr>';
+        lista.forEach((item) => {
+            html += `<tr>
+                <td>${item.data_pagamento}</td>
+                <td>${item.hora_pagamento}</td>
+                <td>${item.forma_pagamento || '-'}</td>
+                <td>R$ ${Number(item.valor_pago || 0).toFixed(2)}</td>
+                <td>${item.observacao || '-'}</td>
+            </tr>`;
+        });
+        html += '</table>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = '<p>Erro ao carregar histórico.</p>';
+    }
+}
+
+function getMensalidadeTotal() {
+    const meses = Math.max(1, parseInt(document.getElementById('mensalidadeMeses')?.value || '1', 10) || 1);
+    const valor = parseFloat(document.getElementById('mensalidadeValor')?.value || '0');
+    return meses * (Number.isNaN(valor) ? 0 : valor);
+}
+
+function atualizarResumoMensalidade() {
+    const resumo = document.getElementById('mensalidadeResumo');
+    const info = document.getElementById('mensalidadeVencimentoEstimado');
+    if (!resumo || !window.mensalidadePagamento) return;
+
+    const meses = Math.max(1, parseInt(document.getElementById('mensalidadeMeses')?.value || '1', 10) || 1);
+    const total = getMensalidadeTotal();
+    const now = new Date();
+    const hoje = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const vencAtual = window.mensalidadePagamento.vencimento ? String(window.mensalidadePagamento.vencimento).slice(0, 10) : null;
+    const baseVenc = vencAtual && vencAtual >= hoje ? vencAtual : hoje;
+    const proxVenc = addMonthsToISODateFront(baseVenc, meses);
+
+    resumo.innerHTML = `
+        <h4>Resumo da Mensalidade</h4>
+        <p><b>Mensalista:</b> <span>${window.mensalidadePagamento.nome}</span></p>
+        <p><b>Placa:</b> <span>${window.mensalidadePagamento.placa}</span></p>
+        <p><b>Vencimento atual:</b> <span>${formatBrDate(vencAtual)}</span></p>
+        <p class="valor-total"><b>Total a Pagar:</b> <span>${formatCurrency(total)}</span></p>
+    `;
+
+    if (info) {
+        info.textContent = `Próximo vencimento estimado: ${formatBrDate(proxVenc)}`;
+    }
+
+    updateSplitSummary('splitMensalidadeLista', 'splitMensalidadeTotal', 'splitMensalidadeRestante', total);
+}
+
+function abrirPagamentoMensalidade(row) {
+    window.mensalidadePagamento = {
+        id: row.id,
+        placa: row.placa,
+        nome: row.nome,
+        vencimento: row.vencimento || null,
+        ativo: row.ativo !== false
+    };
+
+    const valorMensal = parseFloat(localStorage.getItem('valorMensalidade') || '0');
+    const inputValor = document.getElementById('mensalidadeValor');
+    if (inputValor) inputValor.value = Number(valorMensal || 0).toFixed(2);
+    const inputMeses = document.getElementById('mensalidadeMeses');
+    if (inputMeses) inputMeses.value = '1';
+    const inputObs = document.getElementById('mensalidadeObservacao');
+    if (inputObs) inputObs.value = '';
+
+    atualizarResumoMensalidade();
+    resetSplitUI('splitMensalidadeLista', 'splitMensalidadeTotal', 'splitMensalidadeRestante', getMensalidadeTotal());
+    openPopup('mensalidadePagamentoPopup');
+}
+
+async function confirmarPagamentoMensalidade() {
+    if (!window.mensalidadePagamento) return;
+    const total = getMensalidadeTotal();
+    const pagamentos = getSplitPayments('splitMensalidadeLista');
+
+    if (total <= 0) {
+        alert('Informe um valor válido para a mensalidade');
+        return;
+    }
+
+    if (pagamentos.length === 0) {
+        alert('Informe ao menos uma forma de pagamento');
+        return;
+    }
+    if (!validateSplitTotal(total, pagamentos)) {
+        alert('A soma das formas de pagamento precisa fechar o total da mensalidade');
+        return;
+    }
+
+    const meses = Math.max(1, parseInt(document.getElementById('mensalidadeMeses')?.value || '1', 10) || 1);
+    const observacao = document.getElementById('mensalidadeObservacao')?.value?.trim() || '';
+
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/mensalistas/pagamentos`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                mensalista_id: window.mensalidadePagamento.id,
+                placa: window.mensalidadePagamento.placa,
+                nome: window.mensalidadePagamento.nome,
+                meses,
+                observacao,
+                pagamentos
+            })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            throw new Error(data.error || 'Erro ao registrar pagamento');
+        }
+
+        closePopup('mensalidadePagamentoPopup');
+        alert(`Mensalidade registrada. Novo vencimento: ${formatBrDate(data.novo_vencimento)}`);
+        carregarMensalistas();
+        carregarDashboardCaixa();
+        carregarHistoricoMensalidade(window.mensalidadePagamento);
+        window.mensalidadePagamento = null;
+    } catch (err) {
+        alert('Falha ao registrar mensalidade: ' + err.message);
+    }
 }
 
 ///////////////////////////

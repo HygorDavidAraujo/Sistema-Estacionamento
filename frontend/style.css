@@ -249,6 +249,72 @@ main {
     opacity: 1;
 }
 
+/* Split de Pagamento */
+.split-payments {
+    background: #f8f9fa;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    margin-top: 10px;
+}
+
+.split-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: #333;
+}
+
+.split-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.split-row {
+    display: grid;
+    grid-template-columns: 1fr 120px auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.split-row select,
+.split-row input {
+    width: 100%;
+}
+
+.split-row .split-remove {
+    padding: 6px 10px;
+}
+
+.split-footer {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    margin-top: 8px;
+    font-size: 13px;
+    color: #333;
+}
+
+/* Mensalidade */
+.mensalidade-config {
+    background: #f8f9fa;
+    padding: 12px;
+    border-radius: 8px;
+    border-left: 4px solid #0b5ed7;
+    margin-bottom: 12px;
+}
+
+.mensalidade-info {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: #666;
+}
+
 /* Relatórios de Caixa */
 .relatorios-filtros {
     background: #f8f9fa;
@@ -398,6 +464,20 @@ input[type="text"], input[type="number"], select { width:100%; padding:8px 10px;
 .mensalista-form .inline-actions { margin-top: 12px; }
 .hidden-file { display: none; }
 
+.mensalidade-historico {
+    margin-top: 20px;
+    background: #fff;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+}
+
+.mensalidade-historico h4 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: #333;
+}
+
 @media(max-width:1024px){
     .main-container {
         flex-direction: column;
@@ -419,4 +499,5 @@ input[type="text"], input[type="number"], select { width:100%; padding:8px 10px;
     .relatorios-filtros input { max-width: 100%; }
     .header-actions { width: 100%; display:flex; flex-wrap: wrap; gap:6px; }
     .header-actions button { font-size: 14px; margin-left: 0; }
+    .split-row { grid-template-columns: 1fr; }
 }

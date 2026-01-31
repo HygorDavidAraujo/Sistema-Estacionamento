@@ -103,6 +103,13 @@ function normalizePaymentMethod(value) {
     return raw;
 }
 
+function addMonthsToISODate(baseDateStr, months) {
+    const [y, m, d] = String(baseDateStr).split('-').map(Number);
+    const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+    dt.setUTCMonth(dt.getUTCMonth() + months);
+    return dt.toISOString().slice(0, 10);
+}
+
 async function getLastVehicleData(placa) {
     try {
         const result = await query(
@@ -335,20 +342,34 @@ app.post("/entrada", requireAuth, async (req, res) => {
 
 // ROTA PARA REGISTRAR SAÍDA DE VEÍCULO
 app.post("/saida", requireAuth, async (req, res) => {
-    let { placa, valor_pago, tempo_permanencia, forma_pagamento, entryId } = req.body;
+    let { placa, valor_pago, tempo_permanencia, forma_pagamento, entryId, pagamentos } = req.body;
     
     if (!placa && !entryId) {
         return res.status(400).json({ error: "Placa ou entryId é obrigatório" });
     }
     
-    if (!forma_pagamento && valor_pago > 0) {
+    const pagamentosList = Array.isArray(pagamentos) ? pagamentos : [];
+    const pagamentosNormalizados = pagamentosList
+        .map((p) => ({
+            forma_pagamento: normalizePaymentMethod(p?.forma_pagamento),
+            valor_pago: Number(p?.valor_pago || 0)
+        }))
+        .filter((p) => p.forma_pagamento && p.valor_pago > 0);
+
+    if (!forma_pagamento && pagamentosNormalizados.length === 0 && Number(valor_pago) > 0) {
         return res.status(400).json({ error: "Forma de pagamento é obrigatória quando há valor a pagar" });
     }
     
     const placaNorm = placa ? sanitizePlate(placa) : null;
     const entry_id = entryId || null;
 
-    forma_pagamento = normalizePaymentMethod(forma_pagamento);
+    const totalPagamentos = pagamentosNormalizados.reduce((acc, cur) => acc + cur.valor_pago, 0);
+    if (pagamentosNormalizados.length > 0) {
+        valor_pago = totalPagamentos;
+        forma_pagamento = pagamentosNormalizados.length === 1 ? pagamentosNormalizados[0].forma_pagamento : 'Múltiplo';
+    } else {
+        forma_pagamento = normalizePaymentMethod(forma_pagamento);
+    }
 
     const now = new Date();
     const data_saida = formatDateLocal(now);
@@ -366,15 +387,34 @@ app.post("/saida", requireAuth, async (req, res) => {
              RETURNING id`,
             [...paramsBase, whereValue]
         );
-        return result.rowCount || 0;
+        return result.rows?.[0]?.id || 0;
     };
 
-        const finalize = async (targetPlaca) => {
+        const finalize = async (targetPlaca, historicoId) => {
+            if (pagamentosNormalizados.length > 0) {
+                for (const p of pagamentosNormalizados) {
+                    await query(
+                        `INSERT INTO caixa_movimentos (origem, historico_id, placa, valor_pago, forma_pagamento, data_pagamento, hora_pagamento, observacao)
+                         VALUES ('saida', $1, $2, $3, $4, $5, $6, $7)`,
+                        [
+                            historicoId,
+                            targetPlaca || placaNorm,
+                            p.valor_pago,
+                            p.forma_pagamento,
+                            data_saida,
+                            hora_saida,
+                            tempo_permanencia ? `Permanência ${tempo_permanencia}` : null
+                        ]
+                    );
+                }
+            }
+
             await logAudit('saida', {
                 placa: targetPlaca || placaNorm,
                 entry_id,
                 valor_pago: valor_pago || 0,
-                forma_pagamento: forma_pagamento || null
+                forma_pagamento: forma_pagamento || null,
+                pagamentos: pagamentosNormalizados
             });
         return res.json({ 
             success: true,
@@ -391,30 +431,30 @@ app.post("/saida", requireAuth, async (req, res) => {
         await dbReady;
 
         if (entry_id) {
-            const changes = await tryUpdate('entry_id = $6', entry_id);
-            if (changes === 0 && placaNorm) {
+            const updatedId = await tryUpdate('entry_id = $6', entry_id);
+            if (!updatedId && placaNorm) {
                 // Fallback pela placa se entryId não encontrar
-                const changes2 = await tryUpdate('placa = $6', placaNorm);
-                if (changes2 === 0) {
+                const updatedId2 = await tryUpdate('placa = $6', placaNorm);
+                if (!updatedId2) {
                     console.warn(`[BACK] Veículo não encontrado (entryId/placa): ${entry_id}/${placaNorm}`);
                     return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
                 }
-                    return await finalize(placaNorm);
+                    return await finalize(placaNorm, updatedId2);
             }
 
-            if (changes === 0) {
+            if (!updatedId) {
                 console.warn(`[BACK] Veículo não encontrado para entryId: ${entry_id}`);
                 return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
             }
-                return await finalize(placaNorm);
+                return await finalize(placaNorm, updatedId);
         }
 
-        const changes = await tryUpdate('placa = $6', placaNorm);
-        if (changes === 0) {
+        const updatedId = await tryUpdate('placa = $6', placaNorm);
+        if (!updatedId) {
             console.warn(`[BACK] Veículo não encontrado: ${placaNorm}`);
             return res.status(404).json({ error: "Veículo não encontrado ou já saiu" });
         }
-            return await finalize(placaNorm);
+            return await finalize(placaNorm, updatedId);
     } catch (err) {
         console.error("[BACK] Erro ao registrar saída:", err);
         return res.status(500).json({ error: "Erro ao registrar saída" });
@@ -580,7 +620,6 @@ app.get("/historico", async (req, res) => {
 // ROTA PARA OBTER HISTÓRICO FILTRADO POR PLACA
 app.get("/historico/:placa", async (req, res) => {
     const placa = sanitizePlate(req.params.placa);
-
     try {
         await dbReady;
         const result = await query(
@@ -615,94 +654,47 @@ app.get("/historico/:placa", async (req, res) => {
     }
 });
 
-// ROTA PARA OBTER RELATÓRIO RESUMIDO (ESTATÍSTICAS)
-app.get("/relatorio/resumo", async (req, res) => {
-    const { tipo } = req.query;
-    try {
-        await dbReady;
-        let where = '';
-        const params = [];
-        if (tipo === 'mensalista') {
-            where = 'WHERE mensalista = $1';
-            params.push(true);
-        } else if (tipo === 'diarista') {
-            where = 'WHERE diarista = $1';
-            params.push(true);
-        } else if (tipo === 'avulso') {
-            where = 'WHERE mensalista = false AND diarista = false';
-        }
-        const result = await query(
-            `SELECT 
-                COUNT(*) as total_movimentacoes,
-                COUNT(CASE WHEN status = 'saído' THEN 1 END) as total_saidas,
-                COUNT(CASE WHEN status = 'ativo' THEN 1 END) as veiculos_no_patio,
-                COALESCE(SUM(valor_pago), 0) as receita_total,
-                COALESCE(AVG(valor_pago), 0) as valor_medio,
-                COUNT(DISTINCT placa) as total_veiculos_unicos
-             FROM historico ${where}`,
-            params
-        );
-        res.json({ success: true, dados: result.rows?.[0] || {} });
-    } catch (err) {
-        console.error("[BACK] Erro ao gerar relatório:", err);
-        return res.status(500).json({ error: "Erro ao gerar relatório" });
-    }
-});
-
-// ROTA PARA OBTER DASHBOARD DE CAIXA
-app.get("/caixa/dashboard", async (req, res) => {
-    const hoje = formatDateLocal(new Date());
-    
-    try {
-        await dbReady;
-        const result = await query(
-            `SELECT 
-                COALESCE(SUM(valor_pago), 0) as total_recebido,
-                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%dinheiro%' THEN valor_pago ELSE 0 END), 0) as total_dinheiro,
-                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%credito%' OR lower(forma_pagamento) LIKE '%crédito%' THEN valor_pago ELSE 0 END), 0) as total_credito,
-                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%debito%' OR lower(forma_pagamento) LIKE '%débito%' THEN valor_pago ELSE 0 END), 0) as total_debito,
-                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%pix%' THEN valor_pago ELSE 0 END), 0) as total_pix,
-                COUNT(CASE WHEN valor_pago > 0 THEN 1 END) as total_transacoes
-             FROM historico 
-             WHERE status = 'saído' AND data_saida = $1`,
-            [hoje]
-        );
-        res.json({ success: true, dados: result.rows?.[0] || {} });
-    } catch (err) {
-        console.error("[BACK] Erro ao gerar dashboard de caixa:", err);
-        return res.status(500).json({ error: "Erro ao gerar dashboard de caixa" });
-    }
-});
-
 // ROTA PARA RELATÓRIO DE CAIXA POR PERÍODO
 app.get("/caixa/relatorio", async (req, res) => {
     const dataInicio = normalizeDateParam(req.query.dataInicio);
     const dataFim = normalizeDateParam(req.query.dataFim);
     
     let sql = `
+        WITH movimentos AS (
+            SELECT data_saida AS data_ref, forma_pagamento, valor_pago
+            FROM historico h
+            WHERE status = 'saído'
+              AND NOT EXISTS (
+                SELECT 1 FROM caixa_movimentos cm
+                WHERE cm.origem = 'saida' AND cm.historico_id = h.id
+              )
+            UNION ALL
+            SELECT data_pagamento AS data_ref, forma_pagamento, valor_pago
+            FROM caixa_movimentos
+        )
         SELECT 
-            TO_CHAR(data_saida, 'DD/MM/YYYY') as data_saida,
+            TO_CHAR(data_ref, 'DD/MM/YYYY') as data_saida,
             forma_pagamento,
             COUNT(*) as quantidade,
             COALESCE(SUM(valor_pago), 0) as total
-        FROM historico 
-        WHERE status = 'saído'
+        FROM movimentos 
+        WHERE 1=1
     `;
     
     let params = [];
     
     if (dataInicio && dataFim) {
-        sql += ` AND data_saida BETWEEN $1 AND $2`;
+        sql += ` AND data_ref BETWEEN $1 AND $2`;
         params.push(dataInicio, dataFim);
     } else if (dataInicio) {
-        sql += ` AND data_saida >= $1`;
+        sql += ` AND data_ref >= $1`;
         params.push(dataInicio);
     } else if (dataFim) {
-        sql += ` AND data_saida <= $1`;
+        sql += ` AND data_ref <= $1`;
         params.push(dataFim);
     }
     
-    sql += ` GROUP BY data_saida, forma_pagamento ORDER BY data_saida DESC, forma_pagamento`;
+    sql += ` GROUP BY data_ref, forma_pagamento ORDER BY data_ref DESC, forma_pagamento`;
     
     try {
         await dbReady;
@@ -792,6 +784,86 @@ app.get("/configuracoes/:chave", async (req, res) => {
     } catch (err) {
         console.error("[BACK] Erro ao buscar configuração:", err);
         return res.status(500).json({ error: "Erro ao buscar configuração" });
+app.post("/mensalistas/pagamentos", requireAuth, async (req, res) => {
+    const { mensalista_id, placa, nome, meses = 1, observacao, pagamentos = [] } = req.body || {};
+    const placaNorm = placa ? sanitizePlate(placa) : null;
+    const mesesInt = Math.max(1, parseInt(meses, 10) || 1);
+
+    const pagamentosNormalizados = (Array.isArray(pagamentos) ? pagamentos : [])
+        .map((p) => ({
+            forma_pagamento: normalizePaymentMethod(p?.forma_pagamento),
+            valor_pago: Number(p?.valor_pago || 0)
+        }))
+        .filter((p) => p.forma_pagamento && p.valor_pago > 0);
+
+    if (pagamentosNormalizados.length === 0) {
+        return res.status(400).json({ error: 'Informe ao menos uma forma de pagamento válida' });
+    }
+
+    try {
+        await dbReady;
+        const mensalistaResult = await query(
+            `SELECT * FROM mensalistas WHERE id = $1 OR placa = $2 LIMIT 1`,
+            [mensalista_id || null, placaNorm || '']
+        );
+        const mensalista = mensalistaResult.rows?.[0];
+        if (!mensalista) {
+            return res.status(404).json({ error: 'Mensalista não encontrado' });
+        }
+
+        const totalPago = pagamentosNormalizados.reduce((acc, cur) => acc + cur.valor_pago, 0);
+        const now = new Date();
+        const data_pagamento = formatDateLocal(now);
+        const hora_pagamento = formatTimeLocal(now);
+        const vencAtual = mensalista.vencimento ? String(mensalista.vencimento).slice(0, 10) : null;
+        const baseVenc = vencAtual && vencAtual >= data_pagamento ? vencAtual : data_pagamento;
+        const novoVencimento = addMonthsToISODate(baseVenc, mesesInt);
+
+        await tx(async (client) => {
+            for (const p of pagamentosNormalizados) {
+                await client.query(
+                    `INSERT INTO caixa_movimentos (
+                        origem, mensalista_id, placa, nome, valor_pago, forma_pagamento,
+                        data_pagamento, hora_pagamento, observacao
+                    ) VALUES ('mensalidade', $1, $2, $3, $4, $5, $6, $7, $8)`,
+                    [
+                        mensalista.id,
+                        mensalista.placa,
+                        nome || mensalista.nome || null,
+                        p.valor_pago,
+                        p.forma_pagamento,
+                        data_pagamento,
+                        hora_pagamento,
+                        observacao || null
+                    ]
+                );
+            }
+
+            await client.query(
+                `UPDATE mensalistas SET vencimento = $1, atualizado_em = NOW() WHERE id = $2`,
+                [novoVencimento, mensalista.id]
+            );
+        });
+
+        await logAudit('mensalidade_pagamento', {
+            mensalista_id: mensalista.id,
+            placa: mensalista.placa,
+            total: totalPago,
+            pagamentos: pagamentosNormalizados,
+            meses: mesesInt,
+            novo_vencimento: novoVencimento
+        });
+
+        return res.json({
+            success: true,
+            total_pago: totalPago,
+            novo_vencimento: novoVencimento
+        });
+    } catch (err) {
+        console.error('[BACK] Erro ao registrar pagamento mensalidade:', err);
+        return res.status(500).json({ error: 'Erro ao registrar pagamento da mensalidade' });
+    }
+});
     }
 });
 
@@ -972,6 +1044,119 @@ app.patch("/mensalistas/:id/status", requireAuth, async (req, res) => {
     }
 });
 
+// REGISTRAR PAGAMENTO DE MENSALIDADE
+app.post("/mensalistas/pagamentos", requireAuth, async (req, res) => {
+    const { mensalista_id, placa, nome, meses = 1, observacao, pagamentos = [] } = req.body || {};
+    const placaNorm = placa ? sanitizePlate(placa) : null;
+    const mesesInt = Math.max(1, parseInt(meses, 10) || 1);
+
+    const pagamentosNormalizados = (Array.isArray(pagamentos) ? pagamentos : [])
+        .map((p) => ({
+            forma_pagamento: normalizePaymentMethod(p?.forma_pagamento),
+            valor_pago: Number(p?.valor_pago || 0)
+        }))
+        .filter((p) => p.forma_pagamento && p.valor_pago > 0);
+
+    if (pagamentosNormalizados.length === 0) {
+        return res.status(400).json({ error: 'Informe ao menos uma forma de pagamento válida' });
+    }
+
+    try {
+        await dbReady;
+        const mensalistaResult = await query(
+            `SELECT * FROM mensalistas WHERE id = $1 OR placa = $2 LIMIT 1`,
+            [mensalista_id || null, placaNorm || '']
+        );
+        const mensalista = mensalistaResult.rows?.[0];
+        if (!mensalista) {
+            return res.status(404).json({ error: 'Mensalista não encontrado' });
+        }
+
+        const totalPago = pagamentosNormalizados.reduce((acc, cur) => acc + cur.valor_pago, 0);
+        const now = new Date();
+        const data_pagamento = formatDateLocal(now);
+        const hora_pagamento = formatTimeLocal(now);
+        const vencAtual = mensalista.vencimento ? String(mensalista.vencimento).slice(0, 10) : null;
+        const baseVenc = vencAtual && vencAtual >= data_pagamento ? vencAtual : data_pagamento;
+        const novoVencimento = addMonthsToISODate(baseVenc, mesesInt);
+
+        await tx(async (client) => {
+            for (const p of pagamentosNormalizados) {
+                await client.query(
+                    `INSERT INTO caixa_movimentos (
+                        origem, mensalista_id, placa, nome, valor_pago, forma_pagamento,
+                        data_pagamento, hora_pagamento, observacao
+                    ) VALUES ('mensalidade', $1, $2, $3, $4, $5, $6, $7, $8)`,
+                    [
+                        mensalista.id,
+                        mensalista.placa,
+                        nome || mensalista.nome || null,
+                        p.valor_pago,
+                        p.forma_pagamento,
+                        data_pagamento,
+                        hora_pagamento,
+                        observacao || null
+                    ]
+                );
+            }
+
+            await client.query(
+                `UPDATE mensalistas SET vencimento = $1, atualizado_em = NOW() WHERE id = $2`,
+                [novoVencimento, mensalista.id]
+            );
+        });
+
+        await logAudit('mensalidade_pagamento', {
+            mensalista_id: mensalista.id,
+            placa: mensalista.placa,
+            total: totalPago,
+            pagamentos: pagamentosNormalizados,
+            meses: mesesInt,
+            novo_vencimento: novoVencimento
+        });
+
+        return res.json({
+            success: true,
+            total_pago: totalPago,
+            novo_vencimento: novoVencimento
+        });
+    } catch (err) {
+        console.error('[BACK] Erro ao registrar pagamento mensalidade:', err);
+        return res.status(500).json({ error: 'Erro ao registrar pagamento da mensalidade' });
+    }
+});
+
+// HISTÓRICO DE PAGAMENTOS DE MENSALIDADE
+app.get("/mensalistas/:id/pagamentos", requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const limit = Math.min(parseInt(req.query.limit || '50', 10) || 50, 200);
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT
+                id,
+                mensalista_id,
+                placa,
+                nome,
+                valor_pago,
+                forma_pagamento,
+                TO_CHAR(data_pagamento, 'DD/MM/YYYY') as data_pagamento,
+                TO_CHAR(hora_pagamento, 'HH24:MI:SS') as hora_pagamento,
+                observacao,
+                criado_em
+             FROM caixa_movimentos
+             WHERE origem = 'mensalidade' AND mensalista_id = $1
+             ORDER BY data_pagamento DESC, hora_pagamento DESC, id DESC
+             LIMIT $2`,
+            [id, limit]
+        );
+        res.json({ success: true, dados: result.rows || [] });
+    } catch (err) {
+        console.error('[BACK] Erro ao listar pagamentos de mensalidade:', err);
+        return res.status(500).json({ error: 'Erro ao listar pagamentos de mensalidade' });
+    }
+});
+
 // AUDITORIA
 app.get("/auditoria", requireAuth, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit || '100', 10) || 100, 500);
@@ -995,10 +1180,12 @@ app.get("/backup", requireAuth, async (req, res) => {
         const historico = await query(`SELECT * FROM historico`, []);
         const configuracoes = await query(`SELECT * FROM configuracoes`, []);
         const mensalistas = await query(`SELECT * FROM mensalistas`, []);
+        const caixaMovimentos = await query(`SELECT * FROM caixa_movimentos`, []);
         const payload = {
             historico: historico.rows || [],
             configuracoes: configuracoes.rows || [],
-            mensalistas: mensalistas.rows || []
+            mensalistas: mensalistas.rows || [],
+            caixa_movimentos: caixaMovimentos.rows || []
         };
         await logAudit('backup_export', { total_historico: payload.historico.length });
         res.json({ success: true, dados: payload });
@@ -1009,13 +1196,14 @@ app.get("/backup", requireAuth, async (req, res) => {
 });
 
 app.post("/restore", requireAuth, async (req, res) => {
-    const { historico = [], configuracoes = [], mensalistas = [] } = req.body || {};
+    const { historico = [], configuracoes = [], mensalistas = [], caixa_movimentos = [] } = req.body || {};
     try {
         await dbReady;
         await tx(async (client) => {
             await client.query('DELETE FROM historico');
             await client.query('DELETE FROM configuracoes');
             await client.query('DELETE FROM mensalistas');
+            await client.query('DELETE FROM caixa_movimentos');
 
             for (const row of configuracoes) {
                 await client.query(
@@ -1067,6 +1255,29 @@ app.post("/restore", requireAuth, async (req, res) => {
                         row.valor_pago || 0,
                         row.forma_pagamento || null,
                         row.status || 'ativo',
+                        row.criado_em || new Date().toISOString()
+                    ]
+                );
+            }
+
+            for (const row of caixa_movimentos) {
+                await client.query(
+                    `INSERT INTO caixa_movimentos (
+                        id, origem, historico_id, mensalista_id, placa, nome, valor_pago, forma_pagamento,
+                        data_pagamento, hora_pagamento, observacao, criado_em
+                     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+                    [
+                        row.id || null,
+                        row.origem,
+                        row.historico_id || null,
+                        row.mensalista_id || null,
+                        row.placa || null,
+                        row.nome || null,
+                        row.valor_pago || 0,
+                        row.forma_pagamento || null,
+                        row.data_pagamento || null,
+                        row.hora_pagamento || null,
+                        row.observacao || null,
                         row.criado_em || new Date().toISOString()
                     ]
                 );
