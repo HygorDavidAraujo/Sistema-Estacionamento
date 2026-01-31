@@ -339,6 +339,7 @@ main {
 .dashboard-card.percentual p { color: #ef6c00; }
 
 #patio { background:#fff; padding:14px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.04); }
+#patioCarList { display:flex; flex-wrap:wrap; gap:10px; }
 .car-item { border-left:4px solid #0b5ed7; padding:10px; margin-bottom:10px; background:#fafafa; border-radius:6px; position: relative; }
 .valor-devido { color: #0b5ed7; font-weight: bold; font-size: 1.1em; }
 .btn-saida-card { 
