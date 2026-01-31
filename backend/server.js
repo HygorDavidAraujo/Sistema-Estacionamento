@@ -91,6 +91,18 @@ function sanitizePlate(p) {
     return String(p).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 }
 
+function normalizePaymentMethod(value) {
+    if (!value) return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+    const normalized = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (normalized.includes('pix')) return 'Pix';
+    if (normalized.includes('dinheiro') || normalized.includes('cash')) return 'Dinheiro';
+    if (normalized.includes('debito')) return 'Cartão de Débito';
+    if (normalized.includes('credito')) return 'Cartão de Crédito';
+    return raw;
+}
+
 async function getLastVehicleData(placa) {
     try {
         const result = await query(
@@ -335,6 +347,8 @@ app.post("/saida", requireAuth, async (req, res) => {
     
     const placaNorm = placa ? sanitizePlate(placa) : null;
     const entry_id = entryId || null;
+
+    forma_pagamento = normalizePaymentMethod(forma_pagamento);
 
     const now = new Date();
     const data_saida = formatDateLocal(now);
@@ -644,10 +658,10 @@ app.get("/caixa/dashboard", async (req, res) => {
         const result = await query(
             `SELECT 
                 COALESCE(SUM(valor_pago), 0) as total_recebido,
-                COALESCE(SUM(CASE WHEN forma_pagamento = 'Dinheiro' THEN valor_pago ELSE 0 END), 0) as total_dinheiro,
-                COALESCE(SUM(CASE WHEN forma_pagamento = 'Cartão de Crédito' THEN valor_pago ELSE 0 END), 0) as total_credito,
-                COALESCE(SUM(CASE WHEN forma_pagamento = 'Cartão de Débito' THEN valor_pago ELSE 0 END), 0) as total_debito,
-                COALESCE(SUM(CASE WHEN forma_pagamento = 'Pix' THEN valor_pago ELSE 0 END), 0) as total_pix,
+                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%dinheiro%' THEN valor_pago ELSE 0 END), 0) as total_dinheiro,
+                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%credito%' OR lower(forma_pagamento) LIKE '%crédito%' THEN valor_pago ELSE 0 END), 0) as total_credito,
+                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%debito%' OR lower(forma_pagamento) LIKE '%débito%' THEN valor_pago ELSE 0 END), 0) as total_debito,
+                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%pix%' THEN valor_pago ELSE 0 END), 0) as total_pix,
                 COUNT(CASE WHEN valor_pago > 0 THEN 1 END) as total_transacoes
              FROM historico 
              WHERE status = 'saído' AND data_saida = $1`,

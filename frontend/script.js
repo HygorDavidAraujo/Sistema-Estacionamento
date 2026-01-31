@@ -1413,6 +1413,18 @@ function toggleCaixaValores() {
 ///////////////////////////
 // relatórios de caixa
 ///////////////////////////
+function normalizeFormaPagamento(value) {
+    if (!value) return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+    const normalized = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (normalized.includes('pix')) return 'Pix';
+    if (normalized.includes('dinheiro') || normalized.includes('cash')) return 'Dinheiro';
+    if (normalized.includes('debito')) return 'Cartão de Débito';
+    if (normalized.includes('credito')) return 'Cartão de Crédito';
+    return raw;
+}
+
 async function gerarRelatorioCaixa() {
     const dataInicio = document.getElementById('dataInicioCaixa').value;
     const dataFim = document.getElementById('dataFimCaixa').value;
@@ -1459,16 +1471,27 @@ async function gerarRelatorioCaixa() {
             }
             const itemTotal = Number(item.total || 0);
             const itemQtd = Number(item.quantidade || 0);
+            const formaLabel = normalizeFormaPagamento(item.forma_pagamento) || 'Não informado';
             porData[item.data_saida].total += itemTotal;
-            porData[item.data_saida].formas[item.forma_pagamento] = item;
+
+            if (!porData[item.data_saida].formas[formaLabel]) {
+                porData[item.data_saida].formas[formaLabel] = {
+                    data_saida: item.data_saida,
+                    forma_pagamento: formaLabel,
+                    quantidade: 0,
+                    total: 0
+                };
+            }
+            porData[item.data_saida].formas[formaLabel].quantidade += itemQtd;
+            porData[item.data_saida].formas[formaLabel].total += itemTotal;
 
             totalGeral += itemTotal;
             totalTransacoes += itemQtd;
 
-            if (item.forma_pagamento === 'Dinheiro') totalDinheiro += itemTotal;
-            if (item.forma_pagamento === 'Cartão de Crédito') totalCredito += itemTotal;
-            if (item.forma_pagamento === 'Cartão de Débito') totalDebito += itemTotal;
-            if (item.forma_pagamento === 'Pix') totalPix += itemTotal;
+            if (formaLabel === 'Dinheiro') totalDinheiro += itemTotal;
+            if (formaLabel === 'Cartão de Crédito') totalCredito += itemTotal;
+            if (formaLabel === 'Cartão de Débito') totalDebito += itemTotal;
+            if (formaLabel === 'Pix') totalPix += itemTotal;
         });
         
         // Gera HTML do relatório
