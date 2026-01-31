@@ -1431,7 +1431,13 @@ function atualizarResumoMensalidade() {
     const total = getMensalidadeTotal();
     const now = new Date();
     const hoje = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const vencAtual = window.mensalidadePagamento.vencimento ? String(window.mensalidadePagamento.vencimento).slice(0, 10) : null;
+    let vencAtual = window.mensalidadePagamento.vencimento ? String(window.mensalidadePagamento.vencimento).slice(0, 10) : null;
+    if (vencAtual && /^\d{4}-\d{2}-\d{2}$/.test(vencAtual)) {
+        const ano = Number(vencAtual.slice(0, 4));
+        if (!ano || ano < 2000) vencAtual = null;
+    } else {
+        vencAtual = null;
+    }
     const baseVenc = vencAtual && vencAtual >= hoje ? vencAtual : hoje;
     const proxVenc = addMonthsToISODateFront(baseVenc, meses);
 

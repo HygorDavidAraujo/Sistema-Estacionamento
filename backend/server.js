@@ -662,6 +662,45 @@ app.get("/historico/:placa", async (req, res) => {
     }
 });
 
+// ROTA PARA OBTER RELATÓRIO RESUMIDO (ESTATÍSTICAS)
+app.get("/relatorio/resumo", async (req, res) => {
+    const { tipo } = req.query;
+    try {
+        await dbReady;
+        let where = '';
+        const params = [];
+        if (tipo === 'mensalista') {
+            where = 'WHERE mensalista = $1';
+            params.push(true);
+        } else if (tipo === 'diarista') {
+            where = 'WHERE diarista = $1';
+            params.push(true);
+        } else if (tipo === 'avulso') {
+            where = 'WHERE mensalista = false AND diarista = false';
+        }
+        const result = await query(
+            `SELECT 
+                COUNT(*) as total_movimentacoes,
+                COUNT(CASE WHEN status = 'saído' THEN 1 END) as total_saidas,
+                COUNT(CASE WHEN status = 'ativo' THEN 1 END) as veiculos_no_patio,
+                COALESCE(SUM(valor_pago), 0) as receita_total,
+                COALESCE(AVG(valor_pago), 0) as valor_medio,
+                COUNT(DISTINCT placa) as total_veiculos_unicos
+             FROM historico ${where}`,
+            params
+        );
+        res.json({ success: true, dados: result.rows?.[0] || {} });
+    } catch (err) {
+        console.error("[BACK] Erro ao gerar relatório:", err);
+        return res.status(500).json({ error: "Erro ao gerar relatório" });
+    }
+});
+
+app.get("/api/relatorio/resumo", async (req, res) => {
+    req.url = '/relatorio/resumo';
+    return app.handle(req, res);
+});
+
 // ROTA PARA OBTER DASHBOARD DE CAIXA
 app.get("/caixa/dashboard", async (req, res) => {
     const hoje = formatDateLocal(new Date());
@@ -871,7 +910,13 @@ app.post("/mensalistas/pagamentos", requireAuth, async (req, res) => {
         const now = new Date();
         const data_pagamento = formatDateLocal(now);
         const hora_pagamento = formatTimeLocal(now);
-        const vencAtual = mensalista.vencimento ? String(mensalista.vencimento).slice(0, 10) : null;
+        let vencAtual = mensalista.vencimento ? String(mensalista.vencimento).slice(0, 10) : null;
+        if (vencAtual && /^\d{4}-\d{2}-\d{2}$/.test(vencAtual)) {
+            const ano = Number(vencAtual.slice(0, 4));
+            if (!ano || ano < 2000) vencAtual = null;
+        } else {
+            vencAtual = null;
+        }
         const baseVenc = vencAtual && vencAtual >= data_pagamento ? vencAtual : data_pagamento;
         const novoVencimento = addMonthsToISODate(baseVenc, mesesInt);
 
