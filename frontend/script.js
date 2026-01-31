@@ -462,6 +462,13 @@ function bindUI() {
             const entryId = e.target.dataset.entryId;
             registrarSaidaPeloCard(entryId);
         }
+        if (e.target.classList.contains('btn-print-card')) {
+            const entryId = e.target.dataset.entryId;
+            const entry = StorageService.getEntryById(entryId);
+            if (!entry) return alert('Entrada não encontrada.');
+            renderComprovanteEntrada(entry);
+            openPopup('comprovanteEntradaPopup');
+        }
     });
 
     document.querySelectorAll('.popup').forEach(p => p.addEventListener('click', e => { if (e.target === p) closePopupByElement(p); }));
@@ -786,20 +793,7 @@ function registrarEntrada() {
         const valorHoraAdc = localStorage.getItem('valorHoraAdicional') || "2.50";
         const tolerancia = localStorage.getItem('toleranciaHoraAdicional') || "15";
 
-        document.getElementById('comprovanteEntrada').innerHTML = `
-            <h3>Comprovante de Entrada</h3>
-            <p><b>Tipo:</b> ${mensalista ? 'Mensalista' : diarista ? 'Diária' : 'Avulso'}</p>
-            <p><b>Entrada:</b> ${new Date(entrada.horaEntradaMs || entrada.horaEntrada).toLocaleString()}</p>
-            <p><b>1ª Hora:</b> R$ ${valorHora}</p>
-            <p><b>Hora Adicional:</b> R$ ${valorHoraAdc}</p>
-            <p><b>Tolerância:</b> ${tolerancia} min</p>
-            <div class="qr-area">
-                <div id="qrCodeEntrada"></div>
-                <p>Apresente este QR Code na saída.</p>
-            </div>
-        `;
-        QRCodeService.render('qrCodeEntrada', entrada.entryId, { size: 164 })
-            .catch(err => console.warn('[front] não foi possível gerar QR Code:', err));
+        renderComprovanteEntrada(entrada);
         openPopup('comprovanteEntradaPopup');
     })
     .catch(err => {
@@ -1018,7 +1012,10 @@ function updatePatioCarList() {
                          <p><b>Cor:</b> ${ent.cor}</p>
                          <p><b>Tempo no Pátio:</b> ${tempoFormatado}</p>
                          <p><b>Valor Devido:</b> <span class="valor-devido">R$ ${total.toFixed(2)}</span></p>
-                         <button class="btn-saida-card" data-entry-id="${ent.entryId}">Registrar Saída</button>`;
+                         <div class="card-actions">
+                             <button class="btn-saida-card" data-entry-id="${ent.entryId}">Registrar Saída</button>
+                             <button class="btn-print-card" data-entry-id="${ent.entryId}" title="Reimprimir comprovante">🖨️</button>
+                         </div>`;
         patio.appendChild(div);
     });
 }
@@ -1031,6 +1028,31 @@ function printHtml(html) {
     w.document.write(`<html><head><title>Imprimir</title></head><body>${html}</body></html>`);
     w.document.close();
     setTimeout(()=>{ w.print(); w.close(); }, 300);
+}
+
+function renderComprovanteEntrada(entrada) {
+    if (!entrada) return;
+    const valorHora = localStorage.getItem('valorHora') || "5.00";
+    const valorHoraAdc = localStorage.getItem('valorHoraAdicional') || "2.50";
+    const tolerancia = localStorage.getItem('toleranciaHoraAdicional') || "15";
+    const tipo = entrada.mensalista ? 'Mensalista' : entrada.diarista ? 'Diária' : 'Avulso';
+    const entradaDate = new Date(entrada.horaEntradaMs || entrada.horaEntrada);
+
+    document.getElementById('comprovanteEntrada').innerHTML = `
+        <h3>Comprovante de Entrada</h3>
+        <p><b>Tipo:</b> ${tipo}</p>
+        <p><b>Entrada:</b> ${entradaDate.toLocaleString()}</p>
+        <p><b>1ª Hora:</b> R$ ${valorHora}</p>
+        <p><b>Hora Adicional:</b> R$ ${valorHoraAdc}</p>
+        <p><b>Tolerância:</b> ${tolerancia} min</p>
+        <div class="qr-area">
+            <div id="qrCodeEntrada"></div>
+            <p>Apresente este QR Code na saída.</p>
+        </div>
+    `;
+
+    QRCodeService.render('qrCodeEntrada', entrada.entryId, { size: 164 })
+        .catch(err => console.warn('[front] não foi possível gerar QR Code:', err));
 }
 
 function formatTipoRegistro(row) {

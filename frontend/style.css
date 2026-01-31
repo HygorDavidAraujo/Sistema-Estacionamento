@@ -342,8 +342,8 @@ main {
 #patioCarList { display:flex; flex-wrap:wrap; gap:10px; }
 .car-item { border-left:4px solid #0b5ed7; padding:10px; margin-bottom:10px; background:#fafafa; border-radius:6px; position: relative; }
 .valor-devido { color: #0b5ed7; font-weight: bold; font-size: 1.1em; }
+.card-actions { display:flex; gap:8px; align-items:center; margin-top:10px; }
 .btn-saida-card { 
-    margin-top: 10px; 
     padding: 8px 16px; 
     background: #dc3545; 
     color: white; 
@@ -351,7 +351,18 @@ main {
     border-radius: 6px; 
     cursor: pointer; 
     font-size: 14px;
-    width: 100%;
+    flex: 1;
+}
+.btn-print-card {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    background: #0b5ed7;
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
 }
 .btn-saida-card:hover { background: #c82333; opacity: 1; }
 .popup { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); visibility:hidden; opacity:0; transition:opacity .12s; z-index:1000;}
