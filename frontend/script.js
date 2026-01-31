@@ -69,10 +69,14 @@ function formatDuration(ms) {
 function parseEntradaDate(value) {
     if (!value) return null;
     if (value instanceof Date) return value;
-    const direct = new Date(value);
-    if (!Number.isNaN(direct.getTime())) return direct;
-
     const str = String(value).trim();
+    const isoNoTz = str.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+    if (isoNoTz) {
+        const utcDate = new Date(`${str}Z`);
+        if (!Number.isNaN(utcDate.getTime())) return utcDate;
+    }
+    const direct = new Date(str);
+    if (!Number.isNaN(direct.getTime())) return direct;
     const brMatch = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
     if (brMatch) {
         const [, dd, mm, yyyy, hh = '00', min = '00', ss = '00'] = brMatch;
