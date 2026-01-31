@@ -50,16 +50,29 @@ const dbReady = initDb().catch((err) => {
 // Fonte: apicarros.com - retorna marca, modelo, cor, etc.
 const FREE_API = 'https://apicarros.com/v1/consulta';
 
-function pad2(n) {
-    return String(n).padStart(2, "0");
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Sao_Paulo';
+
+function formatDateLocal(date, timeZone = APP_TIMEZONE) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(date);
+    const get = (type) => parts.find(p => p.type === type)?.value || '';
+    return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-function formatDateLocal(date) {
-    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-}
-
-function formatTimeLocal(date) {
-    return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+function formatTimeLocal(date, timeZone = APP_TIMEZONE) {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    }).formatToParts(date);
+    const get = (type) => parts.find(p => p.type === type)?.value || '00';
+    return `${get('hour')}:${get('minute')}:${get('second')}`;
 }
 
 function sanitizePlate(p) {

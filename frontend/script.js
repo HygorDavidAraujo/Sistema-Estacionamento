@@ -779,15 +779,7 @@ function registrarEntrada() {
 
         document.getElementById('comprovanteEntrada').innerHTML = `
             <h3>Comprovante de Entrada</h3>
-            <p><b>ID da Entrada:</b> ${entrada.entryId}</p>
-            <p><b>Placa:</b> ${placa}</p>
-            <p><b>Marca:</b> ${marca}</p>
-            <p><b>Modelo:</b> ${modelo}</p>
-            <p><b>Cor:</b> ${cor}</p>
             <p><b>Tipo:</b> ${mensalista ? 'Mensalista' : diarista ? 'Diária' : 'Avulso'}</p>
-            ${mensalista ? `<p><b>Cliente:</b> ${clienteNome}</p>` : ''}
-            ${mensalista ? `<p><b>Telefone:</b> ${clienteTelefone}</p>` : ''}
-            ${mensalista ? `<p><b>CPF:</b> ${clienteCpf}</p>` : ''}
             <p><b>Entrada:</b> ${new Date(entrada.horaEntrada).toLocaleString()}</p>
             <p><b>1ª Hora:</b> R$ ${valorHora}</p>
             <p><b>Hora Adicional:</b> R$ ${valorHoraAdc}</p>
