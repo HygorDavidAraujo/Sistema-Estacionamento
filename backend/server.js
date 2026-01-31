@@ -105,12 +105,12 @@ function normalizePaymentMethod(value) {
 
 function addMonthsToISODate(baseDateStr, months) {
     const safeBase = typeof baseDateStr === 'string' ? baseDateStr : '';
-    const parts = safeBase.split('-').map(Number);
-    const y = parts[0];
-    const m = parts[1];
-    const d = parts[2];
-    let dt = new Date(Date.UTC(y || 0, (m || 1) - 1, d || 1));
-    if (Number.isNaN(dt.getTime())) {
+    const isValidIso = /^\d{4}-\d{2}-\d{2}$/.test(safeBase);
+    let dt;
+    if (isValidIso) {
+        const [y, m, d] = safeBase.split('-').map(Number);
+        dt = new Date(Date.UTC(y, m - 1, d));
+    } else {
         const now = new Date();
         dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     }

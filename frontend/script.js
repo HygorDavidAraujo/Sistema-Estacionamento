@@ -227,9 +227,17 @@ function validateSplitTotal(expectedTotal, payments) {
 }
 
 function addMonthsToISODateFront(baseDateStr, months) {
-    const [y, m, d] = String(baseDateStr).split('-').map(Number);
-    const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
-    dt.setUTCMonth(dt.getUTCMonth() + months);
+    const safeBase = typeof baseDateStr === 'string' ? baseDateStr : '';
+    const isValidIso = /^\d{4}-\d{2}-\d{2}$/.test(safeBase);
+    let dt;
+    if (isValidIso) {
+        const [y, m, d] = safeBase.split('-').map(Number);
+        dt = new Date(Date.UTC(y, m - 1, d));
+    } else {
+        const now = new Date();
+        dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    }
+    dt.setUTCMonth(dt.getUTCMonth() + (Number(months) || 0));
     return dt.toISOString().slice(0, 10);
 }
 
