@@ -66,9 +66,25 @@ function formatDuration(ms) {
     return `${h}:${m}:${s}`;
 }
 
+function parseEntradaDate(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    const direct = new Date(value);
+    if (!Number.isNaN(direct.getTime())) return direct;
+
+    const str = String(value).trim();
+    const brMatch = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (brMatch) {
+        const [, dd, mm, yyyy, hh = '00', min = '00', ss = '00'] = brMatch;
+        return new Date(`${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}`);
+    }
+    return null;
+}
+
 function calcularValoresPermanencia(horaEntradaISO, horaSaida = new Date()) {
-    const horaEntrada = new Date(horaEntradaISO);
-    const ms = diffMs(horaEntrada, horaSaida);
+    const horaEntrada = parseEntradaDate(horaEntradaISO) || new Date();
+    let ms = diffMs(horaEntrada, horaSaida);
+    if (ms < 0) ms = 0;
     const tempoFormatado = formatDuration(ms);
     const totalMinCeil = Math.ceil(ms / 60000);
 
