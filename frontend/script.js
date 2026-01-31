@@ -69,12 +69,11 @@ function formatDuration(ms) {
 function parseEntradaDate(value) {
     if (!value) return null;
     if (value instanceof Date) return value;
-    const str = String(value).trim();
-    const isoNoTz = str.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
-    if (isoNoTz) {
-        const utcDate = new Date(`${str}Z`);
-        if (!Number.isNaN(utcDate.getTime())) return utcDate;
+    if (typeof value === 'number') {
+        const numericDate = new Date(value);
+        if (!Number.isNaN(numericDate.getTime())) return numericDate;
     }
+    const str = String(value).trim();
     const direct = new Date(str);
     if (!Number.isNaN(direct.getTime())) return direct;
     const brMatch = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
@@ -111,7 +110,7 @@ function calcularValoresPermanencia(horaEntradaISO, horaSaida = new Date()) {
 }
 
 function getEntryPricing(entry, horaSaida = new Date()) {
-    const { tempoFormatado, total, horaEntrada } = calcularValoresPermanencia(entry.horaEntrada, horaSaida);
+    const { tempoFormatado, total, horaEntrada } = calcularValoresPermanencia(entry.horaEntradaMs ?? entry.horaEntrada, horaSaida);
     const valorDiaria = parseFloat(localStorage.getItem('valorDiaria') || '0');
     if (entry.mensalista) {
         return { tempoFormatado, total: 0, horaEntrada, horaSaida, tipo: 'mensalista' };
@@ -502,6 +501,7 @@ function mapBackendEntryToLocal(row) {
     const dateIso = row.data_entrada_iso || '';
     const timeIso = row.hora_entrada_iso || '00:00:00';
     const horaEntrada = dateIso ? `${dateIso}T${timeIso}` : new Date().toISOString();
+    const horaEntradaDate = parseEntradaDate(horaEntrada) || new Date();
     return {
         entryId: row.entry_id,
         placa: row.placa,
@@ -509,6 +509,7 @@ function mapBackendEntryToLocal(row) {
         modelo: row.modelo || '',
         cor: row.cor || '',
         horaEntrada,
+        horaEntradaMs: horaEntradaDate.getTime(),
         mensalista: !!row.mensalista,
         diarista: !!row.diarista,
         cliente_nome: row.cliente_nome || '',
@@ -719,18 +720,20 @@ function registrarEntrada() {
 
     const existingEntry = StorageService.getEntryByPlate(placa);
     if (existingEntry) {
-        const entradaAnterior = new Date(existingEntry.horaEntrada).toLocaleString();
+        const entradaAnterior = new Date(existingEntry.horaEntradaMs || existingEntry.horaEntrada).toLocaleString();
         alert(`Este veículo já está no pátio desde ${entradaAnterior}. Não é possível registrar novamente.`);
         return;
     }
 
+    const now = new Date();
     const entrada = {
         entryId: StorageService.generateEntryId(),
         placa,
         marca,
         modelo,
         cor,
-        horaEntrada: new Date().toISOString(),
+        horaEntrada: now.toISOString(),
+        horaEntradaMs: now.getTime(),
         mensalista,
         diarista,
         cliente_nome: clienteNome,
@@ -780,7 +783,7 @@ function registrarEntrada() {
         document.getElementById('comprovanteEntrada').innerHTML = `
             <h3>Comprovante de Entrada</h3>
             <p><b>Tipo:</b> ${mensalista ? 'Mensalista' : diarista ? 'Diária' : 'Avulso'}</p>
-            <p><b>Entrada:</b> ${new Date(entrada.horaEntrada).toLocaleString()}</p>
+            <p><b>Entrada:</b> ${new Date(entrada.horaEntradaMs || entrada.horaEntrada).toLocaleString()}</p>
             <p><b>1ª Hora:</b> R$ ${valorHora}</p>
             <p><b>Hora Adicional:</b> R$ ${valorHoraAdc}</p>
             <p><b>Tolerância:</b> ${tolerancia} min</p>

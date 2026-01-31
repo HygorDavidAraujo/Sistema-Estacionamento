@@ -413,14 +413,14 @@ app.get("/patio/ativos", async (req, res) => {
                 cliente_nome,
                 cliente_telefone,
                 cliente_cpf,
-                TO_CHAR(data_entrada, 'YYYY-MM-DD') as data_entrada_iso,
-                TO_CHAR(hora_entrada, 'HH24:MI:SS') as hora_entrada_iso,
+                TO_CHAR(criado_em AT TIME ZONE $1, 'YYYY-MM-DD') as data_entrada_iso,
+                TO_CHAR(criado_em AT TIME ZONE $1, 'HH24:MI:SS') as hora_entrada_iso,
                 status,
                 criado_em
              FROM historico
              WHERE status = 'ativo'
              ORDER BY criado_em DESC`,
-            []
+            [APP_TIMEZONE]
         );
         res.json({ success: true, dados: result.rows || [] });
     } catch (err) {
@@ -440,30 +440,30 @@ app.get("/patio/ativo", async (req, res) => {
 
     try {
         await dbReady;
-        const result = await query(
-            `SELECT
-                id,
-                entry_id,
-                placa,
-                marca,
-                modelo,
-                cor,
-                mensalista,
-                diarista,
-                cliente_nome,
-                cliente_telefone,
-                cliente_cpf,
-                TO_CHAR(data_entrada, 'YYYY-MM-DD') as data_entrada_iso,
-                TO_CHAR(hora_entrada, 'HH24:MI:SS') as hora_entrada_iso,
-                status,
-                criado_em
-             FROM historico
-             WHERE status = 'ativo'
-               AND (entry_id = $1 OR placa = $2)
-             ORDER BY criado_em DESC
-             LIMIT 1`,
-            [entryId || '', placaNorm || '']
-        );
+                const result = await query(
+                        `SELECT
+                                id,
+                                entry_id,
+                                placa,
+                                marca,
+                                modelo,
+                                cor,
+                                mensalista,
+                                diarista,
+                                cliente_nome,
+                                cliente_telefone,
+                                cliente_cpf,
+                                TO_CHAR(criado_em AT TIME ZONE $3, 'YYYY-MM-DD') as data_entrada_iso,
+                                TO_CHAR(criado_em AT TIME ZONE $3, 'HH24:MI:SS') as hora_entrada_iso,
+                                status,
+                                criado_em
+                         FROM historico
+                         WHERE status = 'ativo'
+                             AND (entry_id = $1 OR placa = $2)
+                         ORDER BY criado_em DESC
+                         LIMIT 1`,
+                        [entryId || '', placaNorm || '', APP_TIMEZONE]
+                );
         const row = result.rows?.[0];
         if (!row) {
             return res.status(404).json({ error: 'Entrada ativa não encontrada' });
