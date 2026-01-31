@@ -74,6 +74,11 @@ function parseEntradaDate(value) {
         if (!Number.isNaN(numericDate.getTime())) return numericDate;
     }
     const str = String(value).trim();
+    const isoNoTz = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (isoNoTz) {
+        const [, yyyy, mm, dd, hh, min, ss = '00'] = isoNoTz;
+        return new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min), Number(ss));
+    }
     const direct = new Date(str);
     if (!Number.isNaN(direct.getTime())) return direct;
     const brMatch = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
@@ -500,8 +505,9 @@ function handleAuthClick() {
 function mapBackendEntryToLocal(row) {
     const dateIso = row.data_entrada_iso || '';
     const timeIso = row.hora_entrada_iso || '00:00:00';
+    const horaEntradaMs = row.hora_entrada_ms ? Number(row.hora_entrada_ms) : null;
     const horaEntrada = dateIso ? `${dateIso}T${timeIso}` : new Date().toISOString();
-    const horaEntradaDate = parseEntradaDate(horaEntrada) || new Date();
+    const horaEntradaDate = horaEntradaMs ? new Date(horaEntradaMs) : (parseEntradaDate(horaEntrada) || new Date());
     return {
         entryId: row.entry_id,
         placa: row.placa,

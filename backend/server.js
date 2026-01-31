@@ -415,6 +415,7 @@ app.get("/patio/ativos", async (req, res) => {
                 cliente_cpf,
                 TO_CHAR(criado_em AT TIME ZONE $1, 'YYYY-MM-DD') as data_entrada_iso,
                 TO_CHAR(criado_em AT TIME ZONE $1, 'HH24:MI:SS') as hora_entrada_iso,
+                (EXTRACT(EPOCH FROM criado_em) * 1000)::bigint as hora_entrada_ms,
                 status,
                 criado_em
              FROM historico
@@ -455,6 +456,7 @@ app.get("/patio/ativo", async (req, res) => {
                                 cliente_cpf,
                                 TO_CHAR(criado_em AT TIME ZONE $3, 'YYYY-MM-DD') as data_entrada_iso,
                                 TO_CHAR(criado_em AT TIME ZONE $3, 'HH24:MI:SS') as hora_entrada_iso,
+                                (EXTRACT(EPOCH FROM criado_em) * 1000)::bigint as hora_entrada_ms,
                                 status,
                                 criado_em
                          FROM historico
