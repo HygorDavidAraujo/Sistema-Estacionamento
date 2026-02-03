@@ -16,6 +16,9 @@
         videoEl.srcObject = stream;
         streams.set(videoEl, stream);
         await videoEl.play().catch(() => {});
+        if (options.waitForReady !== false) {
+            await waitForReady(videoEl, options.readyTimeout || 2000).catch(() => {});
+        }
         const zoomValue = typeof options.zoom === 'number' ? options.zoom : null;
         if (zoomValue && zoomValue > 0) {
             await applyZoom(videoEl, zoomValue).catch(() => {});
@@ -34,6 +37,39 @@
         const targetZoom = Math.min(Math.max(zoomValue, minZoom), maxZoom);
         await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
         return true;
+    }
+
+    function waitForReady(videoEl, timeoutMs = 2000) {
+        return new Promise((resolve, reject) => {
+            if (!videoEl) return reject(new Error('Vídeo não encontrado'));
+            if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0 && videoEl.readyState >= 2) {
+                return resolve();
+            }
+
+            const onReady = () => {
+                if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0 && videoEl.readyState >= 2) {
+                    cleanup();
+                    resolve();
+                }
+            };
+
+            const cleanup = () => {
+                videoEl.removeEventListener('loadedmetadata', onReady);
+                videoEl.removeEventListener('loadeddata', onReady);
+                videoEl.removeEventListener('playing', onReady);
+                clearTimeout(tid);
+            };
+
+            const tid = setTimeout(() => {
+                cleanup();
+                if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) return resolve();
+                reject(new Error('Câmera não ficou pronta a tempo'));
+            }, timeoutMs);
+
+            videoEl.addEventListener('loadedmetadata', onReady);
+            videoEl.addEventListener('loadeddata', onReady);
+            videoEl.addEventListener('playing', onReady);
+        });
     }
 
     function stopPreview(videoEl) {
@@ -82,6 +118,7 @@
         stopAll,
         captureFrame,
         captureBlob,
-        applyZoom
+        applyZoom,
+        waitForReady
     };
 })();

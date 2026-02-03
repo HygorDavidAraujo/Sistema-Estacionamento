@@ -519,6 +519,7 @@ async function iniciarScanPlaca() {
         } catch (err) {
             await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } }, { zoom: 2 });
         }
+        await CameraService.waitForReady(videoEl, 2500).catch(() => {});
         statusEl.textContent = 'Centralize a placa para reconhecimento automático.';
         startAutoPlateScan();
     } catch (err) {
@@ -534,6 +535,16 @@ async function capturarPlacaDaCamera() {
     if (!videoEl || !statusEl) return;
     if (!videoEl.srcObject) {
         statusEl.textContent = 'Ative a câmera antes de capturar.';
+        return;
+    }
+
+    if (videoEl.videoWidth === 0 || videoEl.videoHeight === 0) {
+        statusEl.textContent = 'Aguardando a câmera ficar pronta...';
+        await CameraService.waitForReady(videoEl, 2500).catch(() => {});
+    }
+
+    if (videoEl.videoWidth === 0 || videoEl.videoHeight === 0) {
+        statusEl.textContent = 'Câmera ainda não está pronta. Tente novamente.';
         return;
     }
 
