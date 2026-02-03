@@ -543,7 +543,13 @@ async function iniciarScanPlaca() {
                 await CameraService.startPreview(videoEl, { video: true }, { zoom: 2 });
             }
         }
-        await CameraService.waitForReady(videoEl, 2500).catch(() => {});
+        await CameraService.waitForReady(videoEl, 3000).catch(() => {});
+        if (!videoEl.videoWidth || !videoEl.videoHeight) {
+            if (statusEl) statusEl.textContent = 'Câmera não iniciou. Verifique permissões ou feche outros apps.';
+            notify('Câmera não iniciou. Verifique permissões.', 'error', 3500);
+            fecharCameraEntrada();
+            return;
+        }
         if (statusEl) statusEl.textContent = 'Centralize a placa para reconhecimento automático.';
         notify('Câmera pronta para leitura.', 'success', 2200);
         startAutoPlateScan();

@@ -16,10 +16,22 @@
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             throw new Error('Câmera não suportada neste dispositivo.');
         }
+        if (videoEl) {
+            videoEl.setAttribute('playsinline', '');
+            videoEl.setAttribute('autoplay', '');
+            videoEl.setAttribute('muted', '');
+            videoEl.playsInline = true;
+            videoEl.autoplay = true;
+            videoEl.muted = true;
+        }
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         videoEl.srcObject = stream;
         streams.set(videoEl, stream);
-        await videoEl.play().catch(() => {});
+        try {
+            await videoEl.play();
+        } catch (err) {
+            throw new Error('Falha ao iniciar o vídeo da câmera.');
+        }
         if (options.waitForReady !== false) {
             await waitForReady(videoEl, options.readyTimeout || 2000).catch(() => {});
         }
