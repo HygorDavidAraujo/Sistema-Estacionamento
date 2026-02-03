@@ -424,11 +424,15 @@ function withTimeout(promise, ms, message = 'timeout') {
     ]);
 }
 
+function isMobileDevice() {
+    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+}
+
 async function capturePlateCandidates(videoEl) {
     if (!videoEl) return [];
     const width = videoEl.videoWidth || 1280;
     const height = videoEl.videoHeight || 720;
-    const maxWidth = 960;
+    const maxWidth = isMobileDevice() ? 640 : 960;
     const scale = width > maxWidth ? maxWidth / width : 1;
     const targetW = Math.max(1, Math.round(width * scale));
     const targetH = Math.max(1, Math.round(height * scale));
@@ -441,7 +445,7 @@ async function capturePlateCandidates(videoEl) {
     ctx.drawImage(videoEl, 0, 0, targetW, targetH);
     candidates.push(await blobFromCanvas(canvas));
 
-    const cropScales = [0.7, 0.5];
+    const cropScales = isMobileDevice() ? [0.6] : [0.7, 0.5];
     for (const scale of cropScales) {
         const cw = Math.floor(targetW * scale);
         const ch = Math.floor(targetH * scale);
@@ -501,11 +505,15 @@ function startAutoPlateScan() {
         autoPlateScanBusy = true;
         autoPlateScanAttempts += 1;
         try {
-            const placa = await withTimeout(recognizePlateFromVideo(videoEl), 10000, 'tempo_esgotado');
+            const placa = await withTimeout(recognizePlateFromVideo(videoEl), 8000, 'tempo_esgotado');
             if (placa) {
                 statusEl.textContent = `Placa detectada: ${placa}`;
                 handlePlateDetected(placa);
                 return;
+            }
+            const lastStatus = PlateService.getLastStatus?.();
+            if (lastStatus?.mensagem) {
+                statusEl.textContent = lastStatus.mensagem;
             }
         } catch (err) {
             if (err?.message === 'tempo_esgotado') {
@@ -598,12 +606,17 @@ async function capturarPlacaDaCamera() {
     stopAutoPlateScan();
     try {
         statusEl.textContent = 'Reconhecendo placa...';
-        const placa = await withTimeout(recognizePlateFromVideo(videoEl), 12000, 'tempo_esgotado');
+        const placa = await withTimeout(recognizePlateFromVideo(videoEl), 9000, 'tempo_esgotado');
         if (placa) {
             statusEl.textContent = `Placa detectada: ${placa}`;
             handlePlateDetected(placa);
         } else {
-            statusEl.textContent = 'Não foi possível ler a placa. Tente aproximar ou ajustar o foco.';
+            const lastStatus = PlateService.getLastStatus?.();
+            if (lastStatus?.mensagem) {
+                statusEl.textContent = lastStatus.mensagem;
+            } else {
+                statusEl.textContent = 'Não foi possível ler a placa. Tente aproximar ou ajustar o foco.';
+            }
         }
     } catch (err) {
         console.error('[front] erro ao capturar placa:', err);
