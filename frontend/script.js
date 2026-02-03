@@ -393,6 +393,61 @@ const autoFillMensalistaData = debounce(async function() {
 ///////////////////////////
 // captura de placa via câmera
 ///////////////////////////
+let autoPlateScanTimer = null;
+let autoPlateScanBusy = false;
+let autoPlateScanAttempts = 0;
+const AUTO_PLATE_SCAN_INTERVAL = 1800;
+const AUTO_PLATE_SCAN_MAX_ATTEMPTS = 8;
+
+function stopAutoPlateScan() {
+    if (autoPlateScanTimer) clearInterval(autoPlateScanTimer);
+    autoPlateScanTimer = null;
+    autoPlateScanBusy = false;
+    autoPlateScanAttempts = 0;
+}
+
+function handlePlateDetected(placa) {
+    if (!placa) return;
+    const placaInput = document.getElementById('placaEntrada');
+    if (placaInput) placaInput.value = placa;
+    autoFillVehicleDataAPI();
+    stopAutoPlateScan();
+    setTimeout(fecharCameraEntrada, 600);
+}
+
+function startAutoPlateScan() {
+    stopAutoPlateScan();
+    const videoEl = document.getElementById('entradaCameraPreview');
+    const statusEl = document.getElementById('entradaCameraStatus');
+    if (!videoEl || !statusEl) return;
+
+    statusEl.textContent = 'Reconhecimento automático ativo...';
+    autoPlateScanTimer = setInterval(async () => {
+        if (autoPlateScanBusy) return;
+        if (!videoEl.srcObject) return;
+        if (autoPlateScanAttempts >= AUTO_PLATE_SCAN_MAX_ATTEMPTS) {
+            statusEl.textContent = 'Não foi possível reconhecer automaticamente. Use Capturar.';
+            stopAutoPlateScan();
+            return;
+        }
+        autoPlateScanBusy = true;
+        autoPlateScanAttempts += 1;
+        try {
+            const blob = await CameraService.captureBlob(videoEl);
+            const placa = await PlateService.recognizePlateFromImage(blob);
+            if (placa) {
+                statusEl.textContent = `Placa detectada: ${placa}`;
+                handlePlateDetected(placa);
+                return;
+            }
+        } catch (err) {
+            console.warn('[front] falha no reconhecimento automático:', err);
+        } finally {
+            autoPlateScanBusy = false;
+        }
+    }, AUTO_PLATE_SCAN_INTERVAL);
+}
+
 async function iniciarScanPlaca() {
     const container = document.getElementById('cameraEntradaContainer');
     const statusEl = document.getElementById('entradaCameraStatus');
@@ -406,7 +461,8 @@ async function iniciarScanPlaca() {
 
     try {
         await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } });
-        statusEl.textContent = 'Centralize a placa e toque em Capturar.';
+        statusEl.textContent = 'Centralize a placa para reconhecimento automático.';
+        startAutoPlateScan();
     } catch (err) {
         statusEl.textContent = 'Não foi possível acessar a câmera.';
         alert('Não foi possível acessar a câmera: ' + err.message);
@@ -424,15 +480,14 @@ async function capturarPlacaDaCamera() {
     }
 
     statusEl.textContent = 'Capturando imagem...';
+    stopAutoPlateScan();
     try {
         const blob = await CameraService.captureBlob(videoEl);
         statusEl.textContent = 'Reconhecendo placa...';
         const placa = await PlateService.recognizePlateFromImage(blob);
         if (placa) {
-            document.getElementById('placaEntrada').value = placa;
             statusEl.textContent = `Placa detectada: ${placa}`;
-            autoFillVehicleDataAPI();
-            setTimeout(fecharCameraEntrada, 600);
+            handlePlateDetected(placa);
         } else {
             statusEl.textContent = 'Não foi possível ler a placa. Tente aproximar ou ajustar o foco.';
         }
@@ -449,6 +504,7 @@ function fecharCameraEntrada() {
     const closeBtn = document.getElementById('fecharCameraEntradaBtn');
     if (container) container.setAttribute('aria-hidden', 'true');
     if (closeBtn) closeBtn.setAttribute('aria-hidden', 'true');
+    stopAutoPlateScan();
     CameraService.stopPreview(videoEl);
 }
 
