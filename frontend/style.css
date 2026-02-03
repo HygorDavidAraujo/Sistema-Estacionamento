@@ -31,6 +31,7 @@ button:hover{opacity:.95}
 .btn-ghost {
     background: #e9ecef;
     color: #0b5ed7;
+    margin-bottom: 10px;
 }
 
 button.btn-ghost:hover { background: #dde2e6; }
@@ -220,6 +221,7 @@ main {
     font-weight: 600;
     cursor: pointer;
     margin-top: 20px;
+    margin-bottom: 10px;
     transition: all 0.3s ease;
 }
 
