@@ -68,6 +68,8 @@ button.btn-ghost:hover { background: #dde2e6; }
     border-radius:8px;
     border:2px solid #0b5ed7;
     background:#0b5ed7;
+    max-height:40vh;
+    object-fit:cover;
 }
 
 #qrCameraCanvas { display:none; }
@@ -462,9 +464,9 @@ main {
     font-size: 16px;
 }
 .btn-saida-card:hover { background: #c82333; opacity: 1; }
-.popup { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); visibility:hidden; opacity:0; transition:opacity .12s; z-index:1000;}
+.popup { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); visibility:hidden; opacity:0; transition:opacity .12s; z-index:1000; padding:16px; }
 .popup[aria-hidden="false"] { visibility:visible; opacity:1; }
-.popup-content { width:100%; max-width:460px; background:#fff; padding:16px; border-radius:8px; position:relative; }
+.popup-content { width:100%; max-width:460px; background:#fff; padding:16px; border-radius:8px; position:relative; max-height:calc(100vh - 32px); overflow-y:auto; }
 .close { position:absolute; right:10px; top:8px; background:transparent; border:none; font-size:22px; cursor:pointer; }
 label { display:block; margin-top:10px; font-size:13px; color:#333; }
 input[type="text"], input[type="number"], select { width:100%; padding:8px 10px; margin-top:6px; border:1px solid #ddd; border-radius:6px; }

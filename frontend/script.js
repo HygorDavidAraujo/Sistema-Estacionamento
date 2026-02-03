@@ -505,15 +505,19 @@ async function iniciarScanPlaca() {
 
     try {
         try {
-            await CameraService.startPreview(videoEl, { 
-                video: { 
-                    facingMode: 'environment',
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 }
-                } 
-            });
+            await CameraService.startPreview(
+                videoEl,
+                { 
+                    video: { 
+                        facingMode: 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    } 
+                },
+                { zoom: 2 }
+            );
         } catch (err) {
-            await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } });
+            await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } }, { zoom: 2 });
         }
         statusEl.textContent = 'Centralize a placa para reconhecimento automático.';
         startAutoPlateScan();

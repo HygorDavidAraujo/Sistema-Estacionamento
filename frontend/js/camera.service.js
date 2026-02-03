@@ -8,7 +8,7 @@
         return { width: w, height: h };
     }
 
-    async function startPreview(videoEl, constraints = { video: { facingMode: 'environment' } }) {
+    async function startPreview(videoEl, constraints = { video: { facingMode: 'environment' } }, options = {}) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             throw new Error('Câmera não suportada neste dispositivo.');
         }
@@ -16,7 +16,24 @@
         videoEl.srcObject = stream;
         streams.set(videoEl, stream);
         await videoEl.play().catch(() => {});
+        const zoomValue = typeof options.zoom === 'number' ? options.zoom : null;
+        if (zoomValue && zoomValue > 0) {
+            await applyZoom(videoEl, zoomValue).catch(() => {});
+        }
         return stream;
+    }
+
+    async function applyZoom(videoEl, zoomValue) {
+        const stream = streams.get(videoEl) || videoEl?.srcObject;
+        const track = stream?.getVideoTracks?.()[0];
+        if (!track || !track.getCapabilities || !track.applyConstraints) return false;
+        const caps = track.getCapabilities();
+        if (!caps || caps.zoom == null) return false;
+        const minZoom = caps.zoom.min ?? zoomValue;
+        const maxZoom = caps.zoom.max ?? zoomValue;
+        const targetZoom = Math.min(Math.max(zoomValue, minZoom), maxZoom);
+        await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
+        return true;
     }
 
     function stopPreview(videoEl) {
@@ -64,6 +81,7 @@
         stopPreview,
         stopAll,
         captureFrame,
-        captureBlob
+        captureBlob,
+        applyZoom
     };
 })();
