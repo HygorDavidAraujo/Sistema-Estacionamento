@@ -15,6 +15,13 @@
         return undefined;
     }
 
+    function withTimeout(promise, ms) {
+        return Promise.race([
+            promise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+        ]);
+    }
+
     async function recognizePlateFromImage(imageBlob) {
         if (!imageBlob) return null;
         const baseUrl = window.BACKEND_BASE || defaultBase;
@@ -31,7 +38,7 @@
         }
         try {
             if (window.OcrService?.recognizePlateFromImage) {
-                const placa = await window.OcrService.recognizePlateFromImage(imageBlob);
+                const placa = await withTimeout(window.OcrService.recognizePlateFromImage(imageBlob), 10000).catch(() => null);
                 if (placa) return normalizePlaca(placa);
             }
         } catch (err) {

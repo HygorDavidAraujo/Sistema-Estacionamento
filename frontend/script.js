@@ -417,30 +417,41 @@ async function blobFromCanvas(canvas, type = 'image/jpeg', quality = 0.92) {
     });
 }
 
+function withTimeout(promise, ms, message = 'timeout') {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
+    ]);
+}
+
 async function capturePlateCandidates(videoEl) {
     if (!videoEl) return [];
     const width = videoEl.videoWidth || 1280;
     const height = videoEl.videoHeight || 720;
+    const maxWidth = 960;
+    const scale = width > maxWidth ? maxWidth / width : 1;
+    const targetW = Math.max(1, Math.round(width * scale));
+    const targetH = Math.max(1, Math.round(height * scale));
     const candidates = [];
 
     const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+    canvas.width = targetW;
+    canvas.height = targetH;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(videoEl, 0, 0, width, height);
+    ctx.drawImage(videoEl, 0, 0, targetW, targetH);
     candidates.push(await blobFromCanvas(canvas));
 
     const cropScales = [0.7, 0.5];
     for (const scale of cropScales) {
-        const cw = Math.floor(width * scale);
-        const ch = Math.floor(height * scale);
-        const sx = Math.floor((width - cw) / 2);
-        const sy = Math.floor((height - ch) / 2);
+        const cw = Math.floor(targetW * scale);
+        const ch = Math.floor(targetH * scale);
+        const sx = Math.floor((targetW - cw) / 2);
+        const sy = Math.floor((targetH - ch) / 2);
         const cropCanvas = document.createElement('canvas');
         cropCanvas.width = cw;
         cropCanvas.height = ch;
         const cctx = cropCanvas.getContext('2d');
-        cctx.drawImage(videoEl, sx, sy, cw, ch, 0, 0, cw, ch);
+        cctx.drawImage(canvas, sx, sy, cw, ch, 0, 0, cw, ch);
         candidates.push(await blobFromCanvas(cropCanvas));
     }
 
@@ -490,13 +501,16 @@ function startAutoPlateScan() {
         autoPlateScanBusy = true;
         autoPlateScanAttempts += 1;
         try {
-            const placa = await recognizePlateFromVideo(videoEl);
+            const placa = await withTimeout(recognizePlateFromVideo(videoEl), 10000, 'tempo_esgotado');
             if (placa) {
                 statusEl.textContent = `Placa detectada: ${placa}`;
                 handlePlateDetected(placa);
                 return;
             }
         } catch (err) {
+            if (err?.message === 'tempo_esgotado') {
+                statusEl.textContent = 'Reconhecimento demorou. Tente aproximar a placa.';
+            }
             console.warn('[front] falha no reconhecimento automático:', err);
         } finally {
             autoPlateScanBusy = false;
@@ -584,7 +598,7 @@ async function capturarPlacaDaCamera() {
     stopAutoPlateScan();
     try {
         statusEl.textContent = 'Reconhecendo placa...';
-        const placa = await recognizePlateFromVideo(videoEl);
+        const placa = await withTimeout(recognizePlateFromVideo(videoEl), 12000, 'tempo_esgotado');
         if (placa) {
             statusEl.textContent = `Placa detectada: ${placa}`;
             handlePlateDetected(placa);
@@ -593,7 +607,11 @@ async function capturarPlacaDaCamera() {
         }
     } catch (err) {
         console.error('[front] erro ao capturar placa:', err);
-        statusEl.textContent = 'Erro ao capturar imagem.';
+        if (err?.message === 'tempo_esgotado') {
+            statusEl.textContent = 'Reconhecimento demorou. Tente novamente.';
+        } else {
+            statusEl.textContent = 'Erro ao capturar imagem.';
+        }
         alert('Erro ao capturar a placa: ' + err.message);
     }
 }
