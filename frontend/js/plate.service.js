@@ -17,6 +17,14 @@
         } catch (err) {
             console.warn('[plate.service] Falha ao reconhecer placa via backend:', err.message);
         }
+        try {
+            if (window.OcrService?.recognizePlateFromImage) {
+                const placa = await window.OcrService.recognizePlateFromImage(imageBlob);
+                if (placa) return normalizePlaca(placa);
+            }
+        } catch (err) {
+            console.warn('[plate.service] OCR local falhou:', err.message);
+        }
         return null;
     }
 
