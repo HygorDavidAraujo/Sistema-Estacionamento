@@ -19,6 +19,8 @@
     </div>
 </header>
 
+<div id="toastContainer" aria-live="polite" role="status"></div>
+
 <div class="main-container">
     <main id="main">
         <!-- DASHBOARD DE VAGAS -->
@@ -96,11 +98,12 @@
         </div>
         
         <button id="btnRelatoriosCaixa" class="btn-relatorios">Ver Relatórios</button>
+    <button id="btnFecharCaixa" class="btn-ghost" type="button">Fechar Caixa</button>
     </aside>
 </div>
 
 <!-- POPUP ENTRADA -->
-<div class="popup" id="entradaPopup" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="entradaPopup" aria-hidden="true">
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <h3>Entrada de Veículo</h3>
@@ -151,7 +154,7 @@
 </div>
 
 <!-- POPUP SAÍDA -->
-<div class="popup" id="saidaPopup" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="saidaPopup" aria-hidden="true">
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <h3>Saída de Veículo</h3>
@@ -178,7 +181,7 @@
 </div>
 
 <!-- POPUP PAGAMENTO -->
-<div class="popup" id="pagamentoPopup" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="pagamentoPopup" aria-hidden="true">
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <h3>Finalizar Pagamento</h3>
@@ -204,7 +207,7 @@
 </div>
 
 <!-- POPUP PAGAMENTO MENSALIDADE -->
-<div class="popup" id="mensalidadePagamentoPopup" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="mensalidadePagamentoPopup" aria-hidden="true">
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <h3>Receber Mensalidade</h3>
@@ -242,8 +245,23 @@
     </div>
 </div>
 
+<!-- POPUP FECHAMENTO CAIXA -->
+<div class="popup" role="dialog" aria-modal="true" id="fechamentoCaixaPopup" aria-hidden="true">
+    <div class="popup-content">
+        <button class="close" data-close>&times;</button>
+        <h3>Fechamento de Caixa</h3>
+        <div id="fechamentoResumo" class="resumo-pagamento"></div>
+        <label for="fechamentoObservacao">Observação</label>
+        <input id="fechamentoObservacao" type="text" />
+        <div class="inline-actions">
+            <button id="confirmarFechamentoBtn" class="btn-primary" type="button">Confirmar Fechamento</button>
+            <button id="cancelarFechamentoBtn" class="btn-ghost" type="button">Cancelar</button>
+        </div>
+    </div>
+</div>
+
 <!-- POPUP MENU/CONFIG -->
-<div class="popup" id="menu" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="menu" aria-hidden="true">
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <h3>Configurações</h3>
@@ -277,7 +295,7 @@
 </div>
 
 <!-- POPUP MENSALISTAS -->
-<div class="popup" id="mensalistasPopup" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="mensalistasPopup" aria-hidden="true">
     <div class="popup-content popup-content-large">
         <button class="close" data-close>&times;</button>
         <h3>Mensalistas</h3>
@@ -326,7 +344,7 @@
 </div>
 
 <!-- COMPROVANTES -->
-<div class="popup" id="comprovanteEntradaPopup" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="comprovanteEntradaPopup" aria-hidden="true">
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <div id="comprovanteEntrada"></div>
@@ -334,7 +352,7 @@
     </div>
 </div>
 
-<div class="popup" id="comprovantePermanenciaPopup" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="comprovantePermanenciaPopup" aria-hidden="true">
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <div id="comprovantePermanencia"></div>
@@ -343,7 +361,7 @@
 </div>
 
 <!-- POPUP HISTÓRICO -->
-<div class="popup" id="historicoPopup" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="historicoPopup" aria-hidden="true">
     <div class="popup-content popup-content-large">
         <button class="close" data-close>&times;</button>
         <h3>Histórico e Relatórios</h3>
@@ -398,7 +416,7 @@
 </div>
 
 <!-- POPUP RELATÓRIOS DE CAIXA -->
-<div class="popup" id="relatoriosCaixaPopup" aria-hidden="true">
+<div class="popup" role="dialog" aria-modal="true" id="relatoriosCaixaPopup" aria-hidden="true">
     <div class="popup-content popup-content-large">
         <button class="close" data-close>&times;</button>
         <h3>📊 Relatórios Financeiros</h3>
@@ -420,8 +438,6 @@
 <!-- Libs externas leves para QR Code e leitura de QR -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-6o2s8m8CCfY0N5V2sCvYH7ycGsRVmKcJsteVEh9UpAJZxkd06Pq4jG3Ejj6LikUeJ8m+RaH//4X4C0L8i1Bw3g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" integrity="sha256-7aX6ixkmKuuNHYsYvwdivgLPgAvFp8ZUBKbjsgg7sug=" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" integrity="sha256-vEDIoVGWI2sjFNsIVvcsoLSZgM1UE7jIUqc0n1/uCFk=" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
 <!-- Serviços modulares -->
 <script src="frontend/js/camera.service.js"></script>

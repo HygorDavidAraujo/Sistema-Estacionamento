@@ -1,4 +1,5 @@
 import express from "express";
+import 'dotenv/config';
 import fetch from "node-fetch";
 import cors from "cors";
 import { initDb, query, tx } from "./db.js";
@@ -101,6 +102,36 @@ function normalizePaymentMethod(value) {
     if (normalized.includes('debito')) return 'Cartão de Débito';
     if (normalized.includes('credito')) return 'Cartão de Crédito';
     return raw;
+}
+
+
+async function getCaixaResumoPorData(dataRef) {
+    const result = await query(
+        `WITH movimentos AS (
+            SELECT data_saida AS data_ref, forma_pagamento, valor_pago
+            FROM historico h
+            WHERE status = 'saído'
+                            AND data_saida = $1
+              AND NOT EXISTS (
+                SELECT 1 FROM caixa_movimentos cm
+                WHERE cm.origem = 'saida' AND cm.historico_id = h.id
+              )
+            UNION ALL
+            SELECT data_pagamento AS data_ref, forma_pagamento, valor_pago
+            FROM caixa_movimentos
+                        WHERE data_pagamento = $1
+        )
+        SELECT 
+            COALESCE(SUM(valor_pago), 0) as total_recebido,
+            COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%dinheiro%' THEN valor_pago ELSE 0 END), 0) as total_dinheiro,
+            COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%credito%' OR lower(forma_pagamento) LIKE '%crédito%' THEN valor_pago ELSE 0 END), 0) as total_credito,
+            COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%debito%' OR lower(forma_pagamento) LIKE '%débito%' THEN valor_pago ELSE 0 END), 0) as total_debito,
+            COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%pix%' THEN valor_pago ELSE 0 END), 0) as total_pix,
+            COUNT(CASE WHEN valor_pago > 0 THEN 1 END) as total_transacoes
+         FROM movimentos`,
+        [dataRef]
+    );
+    return result.rows?.[0] || {};
 }
 
 function addMonthsToISODate(baseDateStr, months) {
@@ -399,22 +430,26 @@ app.post("/saida", requireAuth, async (req, res) => {
     };
 
         const finalize = async (targetPlaca, historicoId) => {
-            if (pagamentosNormalizados.length > 0) {
-                for (const p of pagamentosNormalizados) {
-                    await query(
-                        `INSERT INTO caixa_movimentos (origem, historico_id, placa, valor_pago, forma_pagamento, data_pagamento, hora_pagamento, observacao)
-                         VALUES ('saida', $1, $2, $3, $4, $5, $6, $7)`,
-                        [
-                            historicoId,
-                            targetPlaca || placaNorm,
-                            p.valor_pago,
-                            p.forma_pagamento,
-                            data_saida,
-                            hora_saida,
-                            tempo_permanencia ? `Permanência ${tempo_permanencia}` : null
-                        ]
-                    );
-                }
+            const movimentos = pagamentosNormalizados.length > 0
+                ? pagamentosNormalizados
+                : ((Number(valor_pago || 0) > 0 && forma_pagamento)
+                    ? [{ forma_pagamento, valor_pago: Number(valor_pago || 0) }]
+                    : []);
+
+            for (const p of movimentos) {
+                await query(
+                    `INSERT INTO caixa_movimentos (origem, historico_id, placa, valor_pago, forma_pagamento, data_pagamento, hora_pagamento, observacao)
+                     VALUES ('saida', $1, $2, $3, $4, $5, $6, $7)`,
+                    [
+                        historicoId,
+                        targetPlaca || placaNorm,
+                        p.valor_pago,
+                        p.forma_pagamento,
+                        data_saida,
+                        hora_saida,
+                        tempo_permanencia ? `Permanência ${tempo_permanencia}` : null
+                    ]
+                );
             }
 
             await logAudit('saida', {
@@ -707,32 +742,8 @@ app.get("/caixa/dashboard", async (req, res) => {
 
     try {
         await dbReady;
-        const result = await query(
-            `WITH movimentos AS (
-                SELECT data_saida AS data_ref, forma_pagamento, valor_pago
-                FROM historico h
-                WHERE status = 'saído'
-                  AND data_saida = $1
-                  AND NOT EXISTS (
-                    SELECT 1 FROM caixa_movimentos cm
-                    WHERE cm.origem = 'saida' AND cm.historico_id = h.id
-                  )
-                UNION ALL
-                SELECT data_pagamento AS data_ref, forma_pagamento, valor_pago
-                FROM caixa_movimentos
-                WHERE data_pagamento = $1
-            )
-            SELECT 
-                COALESCE(SUM(valor_pago), 0) as total_recebido,
-                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%dinheiro%' THEN valor_pago ELSE 0 END), 0) as total_dinheiro,
-                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%credito%' OR lower(forma_pagamento) LIKE '%crédito%' THEN valor_pago ELSE 0 END), 0) as total_credito,
-                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%debito%' OR lower(forma_pagamento) LIKE '%débito%' THEN valor_pago ELSE 0 END), 0) as total_debito,
-                COALESCE(SUM(CASE WHEN lower(forma_pagamento) LIKE '%pix%' THEN valor_pago ELSE 0 END), 0) as total_pix,
-                COUNT(CASE WHEN valor_pago > 0 THEN 1 END) as total_transacoes
-             FROM movimentos`,
-            [hoje]
-        );
-        res.json({ success: true, dados: result.rows?.[0] || {} });
+        const dados = await getCaixaResumoPorData(hoje);
+        res.json({ success: true, dados });
     } catch (err) {
         console.error("[BACK] Erro ao gerar dashboard de caixa:", err);
         return res.status(500).json({ error: "Erro ao gerar dashboard de caixa" });
@@ -800,6 +811,91 @@ app.get("/api/caixa/relatorio", async (req, res) => {
     req.url = '/caixa/relatorio';
     return app.handle(req, res);
 });
+// FECHAMENTO DE CAIXA
+app.post("/caixa/fechamento", requireAuth, async (req, res) => {
+    const data_ref = normalizeDateParam(req.body?.data_ref) || formatDateLocal(new Date());
+    const observacao = String(req.body?.observacao || '').trim() || null;
+    const force = Boolean(req.body?.force);
+
+    try {
+        await dbReady;
+
+        const existente = await query(`SELECT id FROM caixa_fechamentos WHERE data_ref = $1`, [data_ref]);
+        if (existente.rows?.[0] && !force) {
+            return res.status(409).json({ error: 'Fechamento já existe para esta data' });
+        }
+
+        const resumo = await getCaixaResumoPorData(data_ref);
+        const payload = {
+            total_recebido: Number(resumo.total_recebido || 0),
+            total_dinheiro: Number(resumo.total_dinheiro || 0),
+            total_credito: Number(resumo.total_credito || 0),
+            total_debito: Number(resumo.total_debito || 0),
+            total_pix: Number(resumo.total_pix || 0),
+            total_transacoes: Number(resumo.total_transacoes || 0)
+        };
+
+        if (existente.rows?.[0]) {
+            await query(`UPDATE caixa_fechamentos
+                 SET total_recebido = $1, total_dinheiro = $2, total_credito = $3, total_debito = $4, total_pix = $5, total_transacoes = $6, observacao = $7
+                 WHERE data_ref = $8`,
+                [payload.total_recebido, payload.total_dinheiro, payload.total_credito, payload.total_debito, payload.total_pix, payload.total_transacoes, observacao, data_ref]
+            );
+        } else {
+            await query(`INSERT INTO caixa_fechamentos (data_ref, total_recebido, total_dinheiro, total_credito, total_debito, total_pix, total_transacoes, observacao)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [data_ref, payload.total_recebido, payload.total_dinheiro, payload.total_credito, payload.total_debito, payload.total_pix, payload.total_transacoes, observacao]
+            );
+        }
+
+        await logAudit('caixa_fechamento', { data_ref, ...payload, force });
+
+        return res.json({ success: true, dados: { data_ref, observacao, ...payload } });
+    } catch (err) {
+        console.error('[BACK] Erro ao fechar caixa:', err);
+        return res.status(500).json({ error: 'Erro ao fechar caixa' });
+    }
+});
+
+app.get("/caixa/fechamentos", requireAuth, async (req, res) => {
+    const dataInicio = normalizeDateParam(req.query.dataInicio);
+    const dataFim = normalizeDateParam(req.query.dataFim);
+
+    let sql = `SELECT
+        id,
+        TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref,
+        total_recebido,
+        total_dinheiro,
+        total_credito,
+        total_debito,
+        total_pix,
+        total_transacoes,
+        observacao,
+        criado_em
+     FROM caixa_fechamentos WHERE 1=1`;
+    const params = [];
+
+    if (dataInicio) {
+        params.push(dataInicio);
+        sql += ` AND data_ref >= $${params.length}`;
+    }
+    if (dataFim) {
+        params.push(dataFim);
+        sql += ` AND data_ref <= $${params.length}`;
+    }
+
+    sql += ` ORDER BY data_ref DESC`;
+
+    try {
+        await dbReady;
+        const result = await query(sql, params);
+        res.json({ success: true, dados: result.rows || [] });
+    } catch (err) {
+        console.error('[BACK] Erro ao listar fechamentos:', err);
+        return res.status(500).json({ error: 'Erro ao listar fechamentos' });
+    }
+});
+
 
 // ROTA PARA OBTER DASHBOARD DE VAGAS
 app.get("/dashboard", async (req, res) => {
@@ -879,92 +975,7 @@ app.get("/configuracoes/:chave", async (req, res) => {
     } catch (err) {
         console.error("[BACK] Erro ao buscar configuração:", err);
         return res.status(500).json({ error: "Erro ao buscar configuração" });
-app.post("/mensalistas/pagamentos", requireAuth, async (req, res) => {
-    const { mensalista_id, placa, nome, meses = 1, observacao, pagamentos = [] } = req.body || {};
-    const placaNorm = placa ? sanitizePlate(placa) : null;
-    const mesesInt = Math.max(1, parseInt(meses, 10) || 1);
 
-    const pagamentosNormalizados = (Array.isArray(pagamentos) ? pagamentos : [])
-        .map((p) => ({
-            forma_pagamento: normalizePaymentMethod(p?.forma_pagamento),
-            valor_pago: Number(p?.valor_pago || 0)
-        }))
-        .filter((p) => p.forma_pagamento && p.valor_pago > 0);
-
-    if (pagamentosNormalizados.length === 0) {
-        return res.status(400).json({ error: 'Informe ao menos uma forma de pagamento válida' });
-    }
-
-    try {
-        await dbReady;
-        const mensalistaResult = await query(
-            `SELECT * FROM mensalistas WHERE id = $1 OR placa = $2 LIMIT 1`,
-            [mensalista_id || null, placaNorm || '']
-        );
-        const mensalista = mensalistaResult.rows?.[0];
-        if (!mensalista) {
-            return res.status(404).json({ error: 'Mensalista não encontrado' });
-        }
-
-        const totalPago = pagamentosNormalizados.reduce((acc, cur) => acc + cur.valor_pago, 0);
-        const now = new Date();
-        const data_pagamento = formatDateLocal(now);
-        const hora_pagamento = formatTimeLocal(now);
-        let vencAtual = mensalista.vencimento ? String(mensalista.vencimento).slice(0, 10) : null;
-        if (vencAtual && /^\d{4}-\d{2}-\d{2}$/.test(vencAtual)) {
-            const ano = Number(vencAtual.slice(0, 4));
-            if (!ano || ano < 2000) vencAtual = null;
-        } else {
-            vencAtual = null;
-        }
-        const baseVenc = vencAtual && vencAtual >= data_pagamento ? vencAtual : data_pagamento;
-        const novoVencimento = addMonthsToISODate(baseVenc, mesesInt);
-
-        await tx(async (client) => {
-            for (const p of pagamentosNormalizados) {
-                await client.query(
-                    `INSERT INTO caixa_movimentos (
-                        origem, mensalista_id, placa, nome, valor_pago, forma_pagamento,
-                        data_pagamento, hora_pagamento, observacao
-                    ) VALUES ('mensalidade', $1, $2, $3, $4, $5, $6, $7, $8)`,
-                    [
-                        mensalista.id,
-                        mensalista.placa,
-                        nome || mensalista.nome || null,
-                        p.valor_pago,
-                        p.forma_pagamento,
-                        data_pagamento,
-                        hora_pagamento,
-                        observacao || null
-                    ]
-                );
-            }
-
-            await client.query(
-                `UPDATE mensalistas SET vencimento = $1, atualizado_em = NOW() WHERE id = $2`,
-                [novoVencimento, mensalista.id]
-            );
-        });
-
-        await logAudit('mensalidade_pagamento', {
-            mensalista_id: mensalista.id,
-            placa: mensalista.placa,
-            total: totalPago,
-            pagamentos: pagamentosNormalizados,
-            meses: mesesInt,
-            novo_vencimento: novoVencimento
-        });
-
-        return res.json({
-            success: true,
-            total_pago: totalPago,
-            novo_vencimento: novoVencimento
-        });
-    } catch (err) {
-        console.error('[BACK] Erro ao registrar pagamento mensalidade:', err);
-        return res.status(500).json({ error: 'Erro ao registrar pagamento da mensalidade' });
-    }
-});
     }
 });
 
@@ -1177,7 +1188,13 @@ app.post("/mensalistas/pagamentos", requireAuth, async (req, res) => {
         const now = new Date();
         const data_pagamento = formatDateLocal(now);
         const hora_pagamento = formatTimeLocal(now);
-        const vencAtual = mensalista.vencimento ? String(mensalista.vencimento).slice(0, 10) : null;
+        let vencAtual = mensalista.vencimento ? String(mensalista.vencimento).slice(0, 10) : null;
+        if (vencAtual && /^\d{4}-\d{2}-\d{2}$/.test(vencAtual)) {
+            const ano = Number(vencAtual.slice(0, 4));
+            if (!ano || ano < 2000) vencAtual = null;
+        } else {
+            vencAtual = null;
+        }
         const baseVenc = vencAtual && vencAtual >= data_pagamento ? vencAtual : data_pagamento;
         const novoVencimento = addMonthsToISODate(baseVenc, mesesInt);
 

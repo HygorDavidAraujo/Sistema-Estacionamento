@@ -89,3 +89,19 @@ VALUES
  ('valor_mensalidade', '300.00', 'Valor da mensalidade (R$)'),
  ('valor_diaria', '25.00', 'Valor da diária (R$)')
 ON CONFLICT (chave) DO NOTHING;
+
+
+CREATE TABLE IF NOT EXISTS caixa_fechamentos (
+    id BIGSERIAL PRIMARY KEY,
+    data_ref DATE NOT NULL UNIQUE,
+    total_recebido NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_dinheiro NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_credito NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_debito NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_pix NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_transacoes INTEGER NOT NULL DEFAULT 0,
+    observacao VARCHAR(255),
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_caixa_fechamentos_data ON caixa_fechamentos(data_ref);

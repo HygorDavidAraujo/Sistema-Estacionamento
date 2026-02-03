@@ -77,6 +77,19 @@ export async function initDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_origem ON caixa_movimentos(origem)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_hist ON caixa_movimentos(historico_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_movimentos_mensalista ON caixa_movimentos(mensalista_id)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS caixa_fechamentos (
+        id BIGSERIAL PRIMARY KEY,
+        data_ref DATE NOT NULL UNIQUE,
+        total_recebido NUMERIC(10,2) NOT NULL DEFAULT 0,
+        total_dinheiro NUMERIC(10,2) NOT NULL DEFAULT 0,
+        total_credito NUMERIC(10,2) NOT NULL DEFAULT 0,
+        total_debito NUMERIC(10,2) NOT NULL DEFAULT 0,
+        total_pix NUMERIC(10,2) NOT NULL DEFAULT 0,
+        total_transacoes INTEGER NOT NULL DEFAULT 0,
+        observacao VARCHAR(255),
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_fechamentos_data ON caixa_fechamentos(data_ref)`);
     console.log("[BACK] Schema aplicado com sucesso");
 }
 

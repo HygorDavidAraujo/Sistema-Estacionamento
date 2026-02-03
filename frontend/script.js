@@ -57,6 +57,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 ///////////////////////////
 // util tempo
 ///////////////////////////
+function notify(message, type = 'info', timeout = 3200) {
+    const container = document.getElementById('toastContainer');
+    if (!container) { alert(message); return; }
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 200);
+    }, timeout);
+}
+
 function diffMs(start, end) { return end.getTime() - start.getTime(); }
 function formatDuration(ms) {
     const totalSeconds = Math.floor(ms / 1000);
@@ -526,9 +540,12 @@ function bindUI() {
     // Caixa
     document.getElementById('toggleCaixaBtn')?.addEventListener('click', toggleCaixaValores);
     document.getElementById('btnRelatoriosCaixa')?.addEventListener('click', () => openPopup('relatoriosCaixaPopup'));
+    document.getElementById('btnFecharCaixa')?.addEventListener('click', abrirFechamentoCaixa);
     document.getElementById('btnGerarRelatorioCaixa')?.addEventListener('click', gerarRelatorioCaixa);
     document.getElementById('confirmarPagamentoBtn')?.addEventListener('click', confirmarPagamento);
     document.getElementById('confirmarMensalidadeBtn')?.addEventListener('click', confirmarPagamentoMensalidade);
+    document.getElementById('confirmarFechamentoBtn')?.addEventListener('click', confirmarFechamentoCaixa);
+    document.getElementById('cancelarFechamentoBtn')?.addEventListener('click', () => closePopup('fechamentoCaixaPopup'));
 
     initSplitHandlers({
         listId: 'splitPagamentoLista',
@@ -640,14 +657,14 @@ function handleAuthClick() {
     if (token) {
         localStorage.removeItem('adminToken');
         updateAuthButton();
-        alert('Acesso removido.');
+        notify('Acesso removido.', 'success');
         return;
     }
     const input = prompt('Informe o token de acesso:');
     if (!input) return;
     localStorage.setItem('adminToken', input.trim());
     updateAuthButton();
-    alert('Acesso aplicado.');
+    notify('Acesso aplicado.', 'success');
 }
 
 function mapBackendEntryToLocal(row) {
@@ -1677,34 +1694,29 @@ function buscarPorPlaca() {
 ///////////////////////////
 async function carregarDashboardCaixa() {
     try {
-        const res = await apiFetch(`${BACKEND_BASE}/caixa/dashboard`);
-        if (!res.ok) throw new Error('Erro ao carregar dashboard de caixa');
-        
-        const data = await res.json();
-        if (data.success && data.dados) {
-            const { total_recebido, total_dinheiro, total_credito, total_debito, total_pix, total_transacoes } = data.dados;
-            
-            // Atualiza valores no dashboard (mantém mascarados se estiver oculto)
-            const isMasked = document.getElementById('caixaTotalRecebido').classList.contains('masked');
-            
-            document.getElementById('caixaTotalRecebido').dataset.valor = total_recebido;
-            document.getElementById('caixaDinheiro').dataset.valor = total_dinheiro;
-            document.getElementById('caixaCredito').dataset.valor = total_credito;
-            document.getElementById('caixaDebito').dataset.valor = total_debito;
-            document.getElementById('caixaPix').dataset.valor = total_pix;
-            
-            if (!isMasked) {
-                document.getElementById('caixaTotalRecebido').textContent = `R$ ${Number(total_recebido).toFixed(2)}`;
-                document.getElementById('caixaDinheiro').textContent = `R$ ${Number(total_dinheiro).toFixed(2)}`;
-                document.getElementById('caixaCredito').textContent = `R$ ${Number(total_credito).toFixed(2)}`;
-                document.getElementById('caixaDebito').textContent = `R$ ${Number(total_debito).toFixed(2)}`;
-                document.getElementById('caixaPix').textContent = `R$ ${Number(total_pix).toFixed(2)}`;
-            }
-            
-            document.getElementById('caixaTransacoes').textContent = total_transacoes;
+        const dados = await fetchDashboardCaixaData();
+        const { total_recebido, total_dinheiro, total_credito, total_debito, total_pix, total_transacoes } = dados;
+        const isMasked = document.getElementById('caixaTotalRecebido').classList.contains('masked');
+
+        document.getElementById('caixaTotalRecebido').dataset.valor = total_recebido;
+        document.getElementById('caixaDinheiro').dataset.valor = total_dinheiro;
+        document.getElementById('caixaCredito').dataset.valor = total_credito;
+        document.getElementById('caixaDebito').dataset.valor = total_debito;
+        document.getElementById('caixaPix').dataset.valor = total_pix;
+
+        if (!isMasked) {
+            document.getElementById('caixaTotalRecebido').textContent = `R$ ${Number(total_recebido).toFixed(2)}`;
+            document.getElementById('caixaDinheiro').textContent = `R$ ${Number(total_dinheiro).toFixed(2)}`;
+            document.getElementById('caixaCredito').textContent = `R$ ${Number(total_credito).toFixed(2)}`;
+            document.getElementById('caixaDebito').textContent = `R$ ${Number(total_debito).toFixed(2)}`;
+            document.getElementById('caixaPix').textContent = `R$ ${Number(total_pix).toFixed(2)}`;
         }
+
+        document.getElementById('caixaTransacoes').textContent = total_transacoes;
+        return dados;
     } catch (err) {
         console.error('[front] Erro ao carregar dashboard de caixa:', err);
+        return null;
     }
 }
 
@@ -1735,6 +1747,63 @@ function toggleCaixaValores() {
 ///////////////////////////
 // relatórios de caixa
 ///////////////////////////
+async function fetchDashboardCaixaData() {
+    const res = await apiFetch(`${BACKEND_BASE}/caixa/dashboard`);
+    if (!res.ok) throw new Error('Erro ao carregar dashboard de caixa');
+    const data = await res.json();
+    if (!data.success || !data.dados) throw new Error('Dados de caixa indisponíveis');
+    return data.dados;
+}
+
+async function abrirFechamentoCaixa() {
+    try {
+        const dados = await fetchDashboardCaixaData();
+        const resumo = document.getElementById('fechamentoResumo');
+        if (resumo) {
+            resumo.innerHTML = `
+                <h4>Resumo do Dia</h4>
+                <p><span>Total Recebido</span><strong>R$ ${Number(dados.total_recebido || 0).toFixed(2)}</strong></p>
+                <p><span>Dinheiro</span><strong>R$ ${Number(dados.total_dinheiro || 0).toFixed(2)}</strong></p>
+                <p><span>Crédito</span><strong>R$ ${Number(dados.total_credito || 0).toFixed(2)}</strong></p>
+                <p><span>Débito</span><strong>R$ ${Number(dados.total_debito || 0).toFixed(2)}</strong></p>
+                <p><span>Pix</span><strong>R$ ${Number(dados.total_pix || 0).toFixed(2)}</strong></p>
+                <p><span>Transações</span><strong>${Number(dados.total_transacoes || 0)}</strong></p>
+            `;
+        }
+        openPopup('fechamentoCaixaPopup');
+    } catch (err) {
+        console.error('[front] erro ao abrir fechamento:', err);
+        notify('Falha ao carregar resumo do caixa.', 'error');
+    }
+}
+
+async function confirmarFechamentoCaixa() {
+    const observacao = document.getElementById('fechamentoObservacao')?.value?.trim() || '';
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/caixa/fechamento`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ observacao })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+            const msg = data.error || data.mensagem || 'Erro ao fechar caixa';
+            if (res.status === 409) {
+                notify('Fechamento já existe para hoje. Use o admin para forçar, se necessário.', 'error');
+            } else {
+                notify(msg, 'error');
+            }
+            return;
+        }
+        closePopup('fechamentoCaixaPopup');
+        document.getElementById('fechamentoObservacao').value = '';
+        notify('Caixa fechado com sucesso.', 'success');
+    } catch (err) {
+        console.error('[front] erro ao fechar caixa:', err);
+        notify('Falha ao fechar caixa.', 'error');
+    }
+}
+
 function normalizeFormaPagamento(value) {
     if (!value) return null;
     const raw = String(value).trim();
