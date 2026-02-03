@@ -399,6 +399,51 @@ let autoPlateScanAttempts = 0;
 const AUTO_PLATE_SCAN_INTERVAL = 1800;
 const AUTO_PLATE_SCAN_MAX_ATTEMPTS = 8;
 
+async function blobFromCanvas(canvas, type = 'image/jpeg', quality = 0.92) {
+    return new Promise((resolve, reject) => {
+        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Falha ao capturar imagem.')), type, quality);
+    });
+}
+
+async function capturePlateCandidates(videoEl) {
+    if (!videoEl) return [];
+    const width = videoEl.videoWidth || 1280;
+    const height = videoEl.videoHeight || 720;
+    const candidates = [];
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(videoEl, 0, 0, width, height);
+    candidates.push(await blobFromCanvas(canvas));
+
+    const cropScales = [0.7, 0.5];
+    for (const scale of cropScales) {
+        const cw = Math.floor(width * scale);
+        const ch = Math.floor(height * scale);
+        const sx = Math.floor((width - cw) / 2);
+        const sy = Math.floor((height - ch) / 2);
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = cw;
+        cropCanvas.height = ch;
+        const cctx = cropCanvas.getContext('2d');
+        cctx.drawImage(videoEl, sx, sy, cw, ch, 0, 0, cw, ch);
+        candidates.push(await blobFromCanvas(cropCanvas));
+    }
+
+    return candidates;
+}
+
+async function recognizePlateFromVideo(videoEl) {
+    const blobs = await capturePlateCandidates(videoEl);
+    for (const blob of blobs) {
+        const placa = await PlateService.recognizePlateFromImage(blob);
+        if (placa) return placa;
+    }
+    return null;
+}
+
 function stopAutoPlateScan() {
     if (autoPlateScanTimer) clearInterval(autoPlateScanTimer);
     autoPlateScanTimer = null;
@@ -433,8 +478,7 @@ function startAutoPlateScan() {
         autoPlateScanBusy = true;
         autoPlateScanAttempts += 1;
         try {
-            const blob = await CameraService.captureBlob(videoEl);
-            const placa = await PlateService.recognizePlateFromImage(blob);
+            const placa = await recognizePlateFromVideo(videoEl);
             if (placa) {
                 statusEl.textContent = `Placa detectada: ${placa}`;
                 handlePlateDetected(placa);
@@ -460,7 +504,17 @@ async function iniciarScanPlaca() {
     statusEl.textContent = 'Solicitando acesso à câmera...';
 
     try {
-        await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } });
+        try {
+            await CameraService.startPreview(videoEl, { 
+                video: { 
+                    facingMode: 'environment',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                } 
+            });
+        } catch (err) {
+            await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } });
+        }
         statusEl.textContent = 'Centralize a placa para reconhecimento automático.';
         startAutoPlateScan();
     } catch (err) {
@@ -482,9 +536,8 @@ async function capturarPlacaDaCamera() {
     statusEl.textContent = 'Capturando imagem...';
     stopAutoPlateScan();
     try {
-        const blob = await CameraService.captureBlob(videoEl);
         statusEl.textContent = 'Reconhecendo placa...';
-        const placa = await PlateService.recognizePlateFromImage(blob);
+        const placa = await recognizePlateFromVideo(videoEl);
         if (placa) {
             statusEl.textContent = `Placa detectada: ${placa}`;
             handlePlateDetected(placa);
