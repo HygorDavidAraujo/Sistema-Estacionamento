@@ -44,6 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await syncActiveEntriesFromBackend();
     carregarDashboard(); // Carrega dashboard de vagas
     carregarDashboardCaixa(); // Carrega dashboard de caixa
+    carregarTurnoAtual(); // Carrega status do turno
     updatePatioCarList();
     // atualiza tempos no pátio, dashboard vagas e caixa a cada 10s
     setInterval(() => {
@@ -51,6 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         updatePatioCarList();
         carregarDashboard();
         carregarDashboardCaixa();
+        carregarTurnoAtual();
     }, 10000);
 });
 
@@ -259,6 +261,15 @@ function formatBrDate(isoDate) {
     if (!isoDate) return '-';
     const [y, m, d] = String(isoDate).split('-');
     return `${d}/${m}/${y}`;
+}
+
+function formatDateTimeBr(value) {
+    if (!value) return '-';
+    const dt = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(dt.getTime())) return '-';
+    const date = dt.toLocaleDateString('pt-BR');
+    const time = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    return `${date} ${time}`;
 }
 
 ///////////////////////////
@@ -540,12 +551,17 @@ function bindUI() {
     // Caixa
     document.getElementById('toggleCaixaBtn')?.addEventListener('click', toggleCaixaValores);
     document.getElementById('btnRelatoriosCaixa')?.addEventListener('click', () => openPopup('relatoriosCaixaPopup'));
+    document.getElementById('btnHistoricoFechamentos')?.addEventListener('click', abrirHistoricoFechamentos);
     document.getElementById('btnFecharCaixa')?.addEventListener('click', abrirFechamentoCaixa);
     document.getElementById('btnGerarRelatorioCaixa')?.addEventListener('click', gerarRelatorioCaixa);
     document.getElementById('confirmarPagamentoBtn')?.addEventListener('click', confirmarPagamento);
     document.getElementById('confirmarMensalidadeBtn')?.addEventListener('click', confirmarPagamentoMensalidade);
     document.getElementById('confirmarFechamentoBtn')?.addEventListener('click', confirmarFechamentoCaixa);
     document.getElementById('cancelarFechamentoBtn')?.addEventListener('click', () => closePopup('fechamentoCaixaPopup'));
+    document.getElementById('btnBuscarFechamentos')?.addEventListener('click', carregarHistoricoFechamentos);
+    document.getElementById('btnTurnoCaixa')?.addEventListener('click', abrirTurnoCaixa);
+    document.getElementById('confirmarAberturaTurnoBtn')?.addEventListener('click', confirmarAberturaTurno);
+    document.getElementById('confirmarFechamentoTurnoBtn')?.addEventListener('click', confirmarFechamentoTurno);
 
     initSplitHandlers({
         listId: 'splitPagamentoLista',
@@ -1770,6 +1786,8 @@ async function abrirFechamentoCaixa() {
                 <p><span>Transações</span><strong>${Number(dados.total_transacoes || 0)}</strong></p>
             `;
         }
+        const forceEl = document.getElementById('fechamentoForce');
+        if (forceEl) forceEl.checked = false;
         openPopup('fechamentoCaixaPopup');
     } catch (err) {
         console.error('[front] erro ao abrir fechamento:', err);
@@ -1779,11 +1797,19 @@ async function abrirFechamentoCaixa() {
 
 async function confirmarFechamentoCaixa() {
     const observacao = document.getElementById('fechamentoObservacao')?.value?.trim() || '';
+    const force = Boolean(document.getElementById('fechamentoForce')?.checked);
+    if (force && !observacao) {
+        notify('Informe uma observação para fechamento forçado.', 'error');
+        return;
+    }
+    if (force && !confirm('Confirma o fechamento forçado? Esta ação sobrescreve o fechamento existente.')) {
+        return;
+    }
     try {
         const res = await apiFetch(`${BACKEND_BASE}/caixa/fechamento`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ observacao })
+            body: JSON.stringify({ observacao, force })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.success) {
@@ -1797,10 +1823,214 @@ async function confirmarFechamentoCaixa() {
         }
         closePopup('fechamentoCaixaPopup');
         document.getElementById('fechamentoObservacao').value = '';
+        const forceEl = document.getElementById('fechamentoForce');
+        if (forceEl) forceEl.checked = false;
         notify('Caixa fechado com sucesso.', 'success');
     } catch (err) {
         console.error('[front] erro ao fechar caixa:', err);
         notify('Falha ao fechar caixa.', 'error');
+    }
+}
+
+///////////////////////////
+// histórico de fechamentos
+///////////////////////////
+async function abrirHistoricoFechamentos() {
+    await carregarHistoricoFechamentos();
+    openPopup('fechamentosHistoricoPopup');
+}
+
+async function carregarHistoricoFechamentos() {
+    const dataInicio = document.getElementById('dataInicioFechamentos')?.value || '';
+    const dataFim = document.getElementById('dataFimFechamentos')?.value || '';
+    const params = new URLSearchParams();
+    if (dataInicio) params.append('dataInicio', dataInicio);
+    if (dataFim) params.append('dataFim', dataFim);
+
+    const container = document.getElementById('fechamentosConteudo');
+    if (!container) return;
+    container.innerHTML = '<p>Carregando...</p>';
+
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/caixa/fechamentos?${params.toString()}`);
+        if (!res.ok) throw new Error('Erro ao buscar fechamentos');
+        const data = await res.json();
+        if (!data.success) throw new Error('Dados indisponíveis');
+        renderHistoricoFechamentos(data.dados || []);
+    } catch (err) {
+        console.error('[front] erro ao carregar fechamentos:', err);
+        container.innerHTML = '<p>Não foi possível carregar o histórico.</p>';
+    }
+}
+
+function renderHistoricoFechamentos(dados) {
+    const container = document.getElementById('fechamentosConteudo');
+    if (!container) return;
+    if (!dados.length) {
+        container.innerHTML = '<p>Nenhum fechamento encontrado.</p>';
+        return;
+    }
+
+    const rows = dados.map(item => `
+        <tr>
+            <td>${formatBrDate(item.data_ref)}</td>
+            <td>${formatCurrency(item.total_recebido)}</td>
+            <td>${formatCurrency(item.total_dinheiro)}</td>
+            <td>${formatCurrency(item.total_credito)}</td>
+            <td>${formatCurrency(item.total_debito)}</td>
+            <td>${formatCurrency(item.total_pix)}</td>
+            <td>${Number(item.total_transacoes || 0)}</td>
+            <td>${item.observacao || '-'}</td>
+            <td>${formatDateTimeBr(item.criado_em)}</td>
+        </tr>
+    `).join('');
+
+    container.innerHTML = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Data</th>
+                    <th>Total</th>
+                    <th>Dinheiro</th>
+                    <th>Crédito</th>
+                    <th>Débito</th>
+                    <th>Pix</th>
+                    <th>Transações</th>
+                    <th>Observação</th>
+                    <th>Criado em</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows}
+            </tbody>
+        </table>
+    `;
+}
+
+///////////////////////////
+// turnos de caixa
+///////////////////////////
+let turnoAtualCache = null;
+
+async function carregarTurnoAtual() {
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/caixa/turnos/atual`);
+        if (!res.ok) throw new Error('Erro ao buscar turno atual');
+        const data = await res.json();
+        turnoAtualCache = data?.dados || null;
+        renderTurnoStatus(turnoAtualCache);
+    } catch (err) {
+        console.error('[front] erro ao carregar turno atual:', err);
+        renderTurnoStatus(null, true);
+    }
+}
+
+function renderTurnoStatus(turno, erro = false) {
+    const statusEl = document.getElementById('turnoStatus');
+    const inicioEl = document.getElementById('turnoInicio');
+    if (!statusEl || !inicioEl) return;
+
+    if (erro) {
+        statusEl.textContent = 'Indisponível';
+        inicioEl.textContent = 'Falha ao carregar turno';
+        return;
+    }
+
+    if (!turno) {
+        statusEl.textContent = 'Fechado';
+        inicioEl.textContent = 'Sem turno aberto';
+        return;
+    }
+
+    statusEl.textContent = 'Aberto';
+    inicioEl.textContent = `Iniciado: ${formatDateTimeBr(turno.aberto_em)}`;
+}
+
+async function abrirTurnoCaixa() {
+    await carregarTurnoAtual();
+    renderTurnoPopup();
+    openPopup('turnoCaixaPopup');
+}
+
+function renderTurnoPopup() {
+    const resumo = document.getElementById('turnoResumo');
+    const abrirBtn = document.getElementById('confirmarAberturaTurnoBtn');
+    const fecharBtn = document.getElementById('confirmarFechamentoTurnoBtn');
+
+    if (!resumo || !abrirBtn || !fecharBtn) return;
+
+    if (turnoAtualCache) {
+        resumo.innerHTML = `
+            <h4>Turno Aberto</h4>
+            <p><span>Início</span><strong>${formatDateTimeBr(turnoAtualCache.aberto_em)}</strong></p>
+            <p><span>Data Ref</span><strong>${formatBrDate(turnoAtualCache.data_ref)}</strong></p>
+        `;
+        abrirBtn.disabled = true;
+        fecharBtn.disabled = false;
+    } else {
+        resumo.innerHTML = `
+            <h4>Turno Fechado</h4>
+            <p>Nenhum turno aberto no momento.</p>
+        `;
+        abrirBtn.disabled = false;
+        fecharBtn.disabled = true;
+    }
+}
+
+async function confirmarAberturaTurno() {
+    const observacao = document.getElementById('turnoObservacao')?.value?.trim() || '';
+    if (turnoAtualCache) {
+        notify('Já existe um turno aberto.', 'error');
+        return;
+    }
+
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/caixa/turnos/abrir`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ observacao })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+            notify(data.error || 'Erro ao abrir turno', 'error');
+            return;
+        }
+        document.getElementById('turnoObservacao').value = '';
+        await carregarTurnoAtual();
+        renderTurnoPopup();
+        notify('Turno aberto com sucesso.', 'success');
+    } catch (err) {
+        console.error('[front] erro ao abrir turno:', err);
+        notify('Falha ao abrir turno.', 'error');
+    }
+}
+
+async function confirmarFechamentoTurno() {
+    const observacao = document.getElementById('turnoObservacao')?.value?.trim() || '';
+    if (!turnoAtualCache) {
+        notify('Nenhum turno aberto para fechar.', 'error');
+        return;
+    }
+    if (!confirm('Confirma o fechamento do turno atual?')) return;
+
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/caixa/turnos/fechar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ turno_id: turnoAtualCache.id, observacao })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+            notify(data.error || 'Erro ao fechar turno', 'error');
+            return;
+        }
+        document.getElementById('turnoObservacao').value = '';
+        closePopup('turnoCaixaPopup');
+        await carregarTurnoAtual();
+        notify('Turno fechado com sucesso.', 'success');
+    } catch (err) {
+        console.error('[front] erro ao fechar turno:', err);
+        notify('Falha ao fechar turno.', 'error');
     }
 }
 

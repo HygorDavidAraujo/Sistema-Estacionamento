@@ -69,7 +69,7 @@ Consolidamos correções críticas no backend, normalizamos o fluxo financeiro (
 - O frontend é HTML/CSS/JS puro, não possui build via npm.
 - Não versionar o arquivo `.env`.
 
-## Próximos Passos Sugeridos
+## Próximos Passos Sugeridos (concluídos)
 1. Tela de histórico de fechamentos de caixa.
-2. Permitir fechamento forçado com confirmação e auditoria.
-3. Evoluir abertura/fechamento formal de caixa por turno.
+2. Fechamento forçado com confirmação e auditoria.
+3. Abertura/fechamento formal de caixa por turno.

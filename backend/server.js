@@ -896,6 +896,147 @@ app.get("/caixa/fechamentos", requireAuth, async (req, res) => {
     }
 });
 
+// TURNOS DE CAIXA
+app.get("/caixa/turnos/atual", requireAuth, async (req, res) => {
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT
+                id,
+                TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref,
+                aberto_em,
+                fechado_em,
+                observacao_abertura,
+                observacao_fechamento
+             FROM caixa_turnos
+             WHERE fechado_em IS NULL
+             ORDER BY aberto_em DESC
+             LIMIT 1`
+        );
+        return res.json({ success: true, dados: result.rows?.[0] || null });
+    } catch (err) {
+        console.error('[BACK] Erro ao buscar turno atual:', err);
+        return res.status(500).json({ error: 'Erro ao buscar turno atual' });
+    }
+});
+
+app.post("/caixa/turnos/abrir", requireAuth, async (req, res) => {
+    const observacao = String(req.body?.observacao || '').trim() || null;
+    const data_ref = normalizeDateParam(req.body?.data_ref) || formatDateLocal(new Date());
+
+    try {
+        await dbReady;
+        const aberto = await query(
+            `SELECT id FROM caixa_turnos WHERE fechado_em IS NULL ORDER BY aberto_em DESC LIMIT 1`
+        );
+        if (aberto.rows?.[0]) {
+            return res.status(409).json({ error: 'Já existe um turno aberto' });
+        }
+
+        const insert = await query(
+            `INSERT INTO caixa_turnos (data_ref, aberto_em, observacao_abertura)
+             VALUES ($1, NOW(), $2)
+             RETURNING id, TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref, aberto_em, observacao_abertura`,
+            [data_ref, observacao]
+        );
+
+        await logAudit('caixa_turno_abertura', { id: insert.rows?.[0]?.id, data_ref, observacao });
+
+        return res.json({ success: true, dados: insert.rows?.[0] || null });
+    } catch (err) {
+        console.error('[BACK] Erro ao abrir turno:', err);
+        return res.status(500).json({ error: 'Erro ao abrir turno' });
+    }
+});
+
+app.post("/caixa/turnos/fechar", requireAuth, async (req, res) => {
+    const observacao = String(req.body?.observacao || '').trim() || null;
+    const turnoId = req.body?.turno_id ? Number(req.body.turno_id) : null;
+
+    try {
+        await dbReady;
+        let turno;
+        if (turnoId) {
+            const result = await query(
+                `SELECT id, data_ref, aberto_em, fechado_em FROM caixa_turnos WHERE id = $1`,
+                [turnoId]
+            );
+            turno = result.rows?.[0];
+        } else {
+            const result = await query(
+                `SELECT id, data_ref, aberto_em, fechado_em FROM caixa_turnos WHERE fechado_em IS NULL ORDER BY aberto_em DESC LIMIT 1`
+            );
+            turno = result.rows?.[0];
+        }
+
+        if (!turno) {
+            return res.status(409).json({ error: 'Nenhum turno aberto para fechar' });
+        }
+        if (turno.fechado_em) {
+            return res.status(409).json({ error: 'Turno já está fechado' });
+        }
+
+        await query(
+            `UPDATE caixa_turnos SET fechado_em = NOW(), observacao_fechamento = $1 WHERE id = $2`,
+            [observacao, turno.id]
+        );
+
+        const updated = await query(
+            `SELECT
+                id,
+                TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref,
+                aberto_em,
+                fechado_em,
+                observacao_abertura,
+                observacao_fechamento
+             FROM caixa_turnos WHERE id = $1`,
+            [turno.id]
+        );
+
+        await logAudit('caixa_turno_fechamento', { id: turno.id, observacao });
+
+        return res.json({ success: true, dados: updated.rows?.[0] || null });
+    } catch (err) {
+        console.error('[BACK] Erro ao fechar turno:', err);
+        return res.status(500).json({ error: 'Erro ao fechar turno' });
+    }
+});
+
+app.get("/caixa/turnos", requireAuth, async (req, res) => {
+    const dataInicio = normalizeDateParam(req.query.dataInicio);
+    const dataFim = normalizeDateParam(req.query.dataFim);
+
+    let sql = `SELECT
+        id,
+        TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref,
+        aberto_em,
+        fechado_em,
+        observacao_abertura,
+        observacao_fechamento
+     FROM caixa_turnos WHERE 1=1`;
+    const params = [];
+
+    if (dataInicio) {
+        params.push(dataInicio);
+        sql += ` AND data_ref >= $${params.length}`;
+    }
+    if (dataFim) {
+        params.push(dataFim);
+        sql += ` AND data_ref <= $${params.length}`;
+    }
+
+    sql += ` ORDER BY aberto_em DESC`;
+
+    try {
+        await dbReady;
+        const result = await query(sql, params);
+        return res.json({ success: true, dados: result.rows || [] });
+    } catch (err) {
+        console.error('[BACK] Erro ao listar turnos:', err);
+        return res.status(500).json({ error: 'Erro ao listar turnos' });
+    }
+});
+
 
 // ROTA PARA OBTER DASHBOARD DE VAGAS
 app.get("/dashboard", async (req, res) => {

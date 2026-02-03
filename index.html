@@ -96,9 +96,18 @@
                 <span class="valor" id="caixaTransacoes">0</span>
             </div>
         </div>
+        <div class="caixa-turno">
+            <div class="turno-info">
+                <span class="label">Turno Atual</span>
+                <strong id="turnoStatus">Fechado</strong>
+                <span class="turno-meta" id="turnoInicio">Sem turno aberto</span>
+            </div>
+            <button id="btnTurnoCaixa" class="btn-ghost" type="button">Gerenciar Turno</button>
+        </div>
         
         <button id="btnRelatoriosCaixa" class="btn-relatorios">Ver Relatórios</button>
-    <button id="btnFecharCaixa" class="btn-ghost" type="button">Fechar Caixa</button>
+        <button id="btnHistoricoFechamentos" class="btn-ghost" type="button">Histórico de Fechamentos</button>
+        <button id="btnFecharCaixa" class="btn-ghost" type="button">Fechar Caixa</button>
     </aside>
 </div>
 
@@ -253,9 +262,26 @@
         <div id="fechamentoResumo" class="resumo-pagamento"></div>
         <label for="fechamentoObservacao">Observação</label>
         <input id="fechamentoObservacao" type="text" />
+        <label class="checkbox-item"><input id="fechamentoForce" type="checkbox" /> Forçar fechamento (sobrescrever existente)</label>
+        <p class="help-text">Use apenas com autorização. A ação será registrada em auditoria.</p>
         <div class="inline-actions">
             <button id="confirmarFechamentoBtn" class="btn-primary" type="button">Confirmar Fechamento</button>
             <button id="cancelarFechamentoBtn" class="btn-ghost" type="button">Cancelar</button>
+        </div>
+    </div>
+</div>
+
+<!-- POPUP TURNO DE CAIXA -->
+<div class="popup" role="dialog" aria-modal="true" id="turnoCaixaPopup" aria-hidden="true">
+    <div class="popup-content">
+        <button class="close" data-close>&times;</button>
+        <h3>Turno de Caixa</h3>
+        <div id="turnoResumo" class="resumo-pagamento"></div>
+        <label for="turnoObservacao">Observação</label>
+        <input id="turnoObservacao" type="text" />
+        <div class="inline-actions">
+            <button id="confirmarAberturaTurnoBtn" class="btn-primary" type="button">Abrir Turno</button>
+            <button id="confirmarFechamentoTurnoBtn" class="btn-ghost" type="button">Fechar Turno</button>
         </div>
     </div>
 </div>
@@ -412,6 +438,26 @@
         </div>
         
         <div id="historicoConteudo" class="historico-conteudo"></div>
+    </div>
+</div>
+
+<!-- POPUP RELATÓRIOS DE CAIXA -->
+<div class="popup" role="dialog" aria-modal="true" id="fechamentosHistoricoPopup" aria-hidden="true">
+    <div class="popup-content popup-content-large">
+        <button class="close" data-close>&times;</button>
+        <h3>🧾 Histórico de Fechamentos</h3>
+
+        <div class="relatorios-filtros">
+            <label for="dataInicioFechamentos">Data Início:</label>
+            <input type="date" id="dataInicioFechamentos" />
+
+            <label for="dataFimFechamentos">Data Fim:</label>
+            <input type="date" id="dataFimFechamentos" />
+
+            <button id="btnBuscarFechamentos" class="btn-primary">Buscar</button>
+        </div>
+
+        <div id="fechamentosConteudo" class="relatorio-caixa-conteudo"></div>
     </div>
 </div>
 

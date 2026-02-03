@@ -105,3 +105,16 @@ CREATE TABLE IF NOT EXISTS caixa_fechamentos (
 );
 
 CREATE INDEX IF NOT EXISTS idx_caixa_fechamentos_data ON caixa_fechamentos(data_ref);
+
+CREATE TABLE IF NOT EXISTS caixa_turnos (
+    id BIGSERIAL PRIMARY KEY,
+    data_ref DATE NOT NULL DEFAULT CURRENT_DATE,
+    aberto_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    fechado_em TIMESTAMPTZ,
+    observacao_abertura VARCHAR(255),
+    observacao_fechamento VARCHAR(255),
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_caixa_turnos_data ON caixa_turnos(data_ref);
+CREATE INDEX IF NOT EXISTS idx_caixa_turnos_aberto ON caixa_turnos(aberto_em);
