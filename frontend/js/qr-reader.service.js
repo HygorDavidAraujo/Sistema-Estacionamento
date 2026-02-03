@@ -62,7 +62,11 @@
 
     async function start(videoEl, canvasEl, onResult) {
         await ensureJsQRLoaded();
-        await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } }, { zoom: 2 });
+        try {
+            await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } }, { zoom: 2 });
+        } catch (err) {
+            await CameraService.startPreview(videoEl, { video: true }, { zoom: 2 });
+        }
         await waitForVideoReady(videoEl).catch(() => {});
         scanning = true;
         const loop = () => {

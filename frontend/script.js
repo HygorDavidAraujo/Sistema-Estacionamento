@@ -13,12 +13,24 @@ function apiFetch(url, options = {}) {
     return fetch(url, { ...options, headers });
 }
 
+function timeoutSignal(ms) {
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        return AbortSignal.timeout(ms);
+    }
+    if (typeof AbortController !== 'undefined') {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), ms);
+        return controller.signal;
+    }
+    return undefined;
+}
+
 async function detectBackendPort(startPort = 3000, maxPort = 3005) {
     for (let port = startPort; port <= maxPort; port++) {
         try {
             const res = await fetch(`http://localhost:${port}/placa/test`, {
                 method: 'GET',
-                signal: AbortSignal.timeout(1500)
+                signal: timeoutSignal(1500)
             });
             if (res.ok || res.status === 400 || res.status === 404 || res.status === 502) {
                 console.log(`[front] Backend detectado na porta ${port}`);
@@ -501,7 +513,15 @@ async function iniciarScanPlaca() {
 
     container.setAttribute('aria-hidden', 'false');
     closeBtn?.setAttribute('aria-hidden', 'false');
-    statusEl.textContent = 'Solicitando acesso à câmera...';
+    if (statusEl) statusEl.textContent = 'Solicitando acesso à câmera...';
+    notify('Abrindo câmera...', 'info', 2000);
+
+    const isSecure = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    if (!isSecure) {
+        if (statusEl) statusEl.textContent = 'Câmera requer HTTPS. Abra o sistema via HTTPS.';
+        notify('Câmera requer HTTPS (ou localhost).', 'error', 4000);
+        return;
+    }
 
     try {
         try {
@@ -517,13 +537,19 @@ async function iniciarScanPlaca() {
                 { zoom: 2 }
             );
         } catch (err) {
-            await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } }, { zoom: 2 });
+            try {
+                await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } }, { zoom: 2 });
+            } catch (err2) {
+                await CameraService.startPreview(videoEl, { video: true }, { zoom: 2 });
+            }
         }
         await CameraService.waitForReady(videoEl, 2500).catch(() => {});
-        statusEl.textContent = 'Centralize a placa para reconhecimento automático.';
+        if (statusEl) statusEl.textContent = 'Centralize a placa para reconhecimento automático.';
+        notify('Câmera pronta para leitura.', 'success', 2200);
         startAutoPlateScan();
     } catch (err) {
-        statusEl.textContent = 'Não foi possível acessar a câmera.';
+        if (statusEl) statusEl.textContent = 'Não foi possível acessar a câmera.';
+        notify('Não foi possível acessar a câmera.', 'error', 3200);
         alert('Não foi possível acessar a câmera: ' + err.message);
         fecharCameraEntrada();
     }

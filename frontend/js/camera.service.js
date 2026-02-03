@@ -9,6 +9,10 @@
     }
 
     async function startPreview(videoEl, constraints = { video: { facingMode: 'environment' } }, options = {}) {
+        const isSecure = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        if (!isSecure) {
+            throw new Error('Acesso à câmera requer HTTPS (ou localhost).');
+        }
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             throw new Error('Câmera não suportada neste dispositivo.');
         }

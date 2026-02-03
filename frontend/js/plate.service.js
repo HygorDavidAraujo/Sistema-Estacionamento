@@ -3,6 +3,18 @@
     const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:';
     const defaultBase = window.BACKEND_BASE || (isLocal ? 'http://localhost:3000' : `${location.origin}/api`);
 
+    function timeoutSignal(ms) {
+        if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+            return AbortSignal.timeout(ms);
+        }
+        if (typeof AbortController !== 'undefined') {
+            const controller = new AbortController();
+            setTimeout(() => controller.abort(), ms);
+            return controller.signal;
+        }
+        return undefined;
+    }
+
     async function recognizePlateFromImage(imageBlob) {
         if (!imageBlob) return null;
         const baseUrl = window.BACKEND_BASE || defaultBase;
@@ -10,7 +22,7 @@
         try {
             const formData = new FormData();
             formData.append('image', imageBlob, 'capture.jpg');
-            const res = await fetch(endpoint, { method: 'POST', body: formData, signal: AbortSignal.timeout(6000) });
+            const res = await fetch(endpoint, { method: 'POST', body: formData, signal: timeoutSignal(6000) });
             if (!res.ok) throw new Error('Reconhecimento indisponível');
             const data = await res.json();
             if (data?.placa) return normalizePlaca(data.placa);
@@ -33,7 +45,7 @@
         if (!normalized) return null;
         const baseUrl = window.BACKEND_BASE || defaultBase;
         try {
-            const res = await fetch(`${baseUrl}/placa/${normalized}`, { method: 'GET', signal: AbortSignal.timeout(5000) });
+            const res = await fetch(`${baseUrl}/placa/${normalized}`, { method: 'GET', signal: timeoutSignal(5000) });
             if (!res.ok) return null;
             const data = await res.json();
             if (data.error) return null;
