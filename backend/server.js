@@ -165,29 +165,35 @@ async function getLastVehicleData(placa) {
 // ROTA PARA CONSULTAR A PLACA (API gratuita)
 app.get("/placa/:placa", async (req, res) => {
     const placa = sanitizePlate(req.params.placa);
-    console.log("[BACK] Consultando placa:", placa);
+    console.log("[BACK] GET /placa/:placa chamado com:", placa);
 
     if (placa.length < 7) {
+        console.log("[BACK] Placa muito curta, rejeitando");
         return res.status(400).json({ error: "Placa inválida", encontrado: false });
     }
 
     await dbReady;
     const cache = await getLastVehicleData(placa);
-    const respondWithCache = (mensagem) => res.json({
-        encontrado: false,
-        marca: cache?.marca || "",
-        modelo: cache?.modelo || "",
-        cor: cache?.cor || "",
-        origem: cache ? 'cache' : 'api',
-        mensagem: mensagem || "API indisponível. Preencha manualmente."
-    });
+    console.log("[BACK] Cache local:", cache);
+    
+    const respondWithCache = (mensagem) => {
+        console.log("[BACK] Respondendo com cache ou erro:", mensagem);
+        return res.json({
+            encontrado: false,
+            marca: cache?.marca || "",
+            modelo: cache?.modelo || "",
+            cor: cache?.cor || "",
+            origem: cache ? 'cache' : 'api',
+            mensagem: mensagem || "API indisponível. Preencha manualmente."
+        });
+    };
 
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 4500);
 
         const url = `${FREE_API}/${encodeURIComponent(placa)}.json`;
-        console.log('[BACK] URL Dados:', url);
+        console.log('[BACK] Chamando API Carros:', url);
 
         const resp = await fetch(url, { 
             method: 'GET',
@@ -196,12 +202,14 @@ app.get("/placa/:placa", async (req, res) => {
         });
         clearTimeout(timeout);
 
+        console.log('[BACK] Resposta API Carros status:', resp.status);
         if (!resp.ok) {
-            console.warn('[BACK] API retornou status:', resp.status);
+            console.warn('[BACK] API retornou status não OK:', resp.status);
             return respondWithCache("API indisponível. Preencha manualmente.");
         }
 
         const data = await resp.json();
+        console.log('[BACK] Resposta API Carros:', JSON.stringify(data).substring(0, 300));
 
         // Alguns retornos podem indicar erro na própria resposta
         if (data?.codigoRetorno && data.codigoRetorno !== "0") {
@@ -214,9 +222,11 @@ app.get("/placa/:placa", async (req, res) => {
         const cor = data?.cor || "";
 
         if (!marca && !modelo) {
+            console.log('[BACK] Sem marca ou modelo na resposta');
             return respondWithCache("Dados não encontrados. Preencha manualmente.");
         }
 
+        console.log('[BACK] Sucesso! Retornando:', { marca, modelo, cor });
         return res.json({
             encontrado: true,
             marca,
@@ -226,7 +236,7 @@ app.get("/placa/:placa", async (req, res) => {
         });
 
     } catch (error) {
-        console.error("[BACK] ERRO AO CONSULTAR:", error);
+        console.error("[BACK] ERRO AO CONSULTAR:", error.message);
         return respondWithCache("Erro na API. Preencha manualmente.");
     }
 });

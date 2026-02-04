@@ -67,10 +67,18 @@
         const normalized = normalizePlaca(placa);
         if (!normalized) return null;
         const baseUrl = window.BACKEND_BASE || defaultBase;
+        console.log('[plate.service] Consultando placa:', normalized, 'baseUrl:', baseUrl);
         try {
-            const res = await fetch(`${baseUrl}/placa/${normalized}`, { method: 'GET', signal: timeoutSignal(5000) });
-            if (!res.ok) return null;
+            const endpoint = `${baseUrl}/placa/${normalized}`;
+            console.log('[plate.service] Endpoint:', endpoint);
+            const res = await fetch(endpoint, { method: 'GET', signal: timeoutSignal(5000) });
+            console.log('[plate.service] Status:', res.status);
+            if (!res.ok) {
+                console.warn('[plate.service] Resposta não OK:', res.status);
+                return null;
+            }
             const data = await res.json();
+            console.log('[plate.service] Dados:', data);
             if (data.error) return null;
             return {
                 encontrado: data.encontrado !== false,

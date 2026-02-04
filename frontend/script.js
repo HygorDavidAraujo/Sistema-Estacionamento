@@ -352,7 +352,11 @@ const autoFillVehicleDataAPI = debounce(async function() {
     const placaIn = document.getElementById('placaEntrada');
     if (!placaIn) return;
     const placa = normalizePlaca(placaIn.value || '');
-    if (placa.length < 7 || !isValidPlaca(placa)) return;
+    console.log('[front] autoFillVehicleDataAPI:', placa);
+    if (placa.length < 7 || !isValidPlaca(placa)) {
+        console.log('[front] Placa inválida ou muito curta:', placa.length);
+        return;
+    }
 
     // 1) Verifica cache local
     const local = getVehicleInfo(placa);
@@ -365,7 +369,9 @@ const autoFillVehicleDataAPI = debounce(async function() {
     }
 
     // 2) Consulta backend
+    console.log('[front] Consultando API para:', placa);
     const info = await consultarPlacaAPI(placa);
+    console.log('[front] Resposta API:', info);
     if (!info) {
         console.warn('[front] sem dados da API para placa', placa);
         return;
