@@ -69,9 +69,18 @@
         const baseUrl = window.BACKEND_BASE || defaultBase;
         console.log('[plate.service] Consultando placa:', normalized, 'baseUrl:', baseUrl);
         try {
-            const endpoint = `${baseUrl}/placa/${normalized}`;
+            const endpoint = `${baseUrl}/placa/${normalized}?t=${Date.now()}`;
             console.log('[plate.service] Endpoint:', endpoint);
-            const res = await fetch(endpoint, { method: 'GET', signal: timeoutSignal(5000) });
+            const res = await fetch(endpoint, { 
+                method: 'GET', 
+                signal: timeoutSignal(5000),
+                cache: 'no-store',
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                }
+            });
             console.log('[plate.service] Status:', res.status);
             if (!res.ok) {
                 console.warn('[plate.service] Resposta não OK:', res.status);
