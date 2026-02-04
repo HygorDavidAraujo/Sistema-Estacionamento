@@ -202,14 +202,16 @@ app.get("/placa/:placa", async (req, res) => {
         });
         clearTimeout(timeout);
 
-        console.log('[BACK] Resposta API Carros status:', resp.status);
+        console.log('[BACK] Resposta API Carros status:', resp.status, resp.statusText);
+        
         if (!resp.ok) {
-            console.warn('[BACK] API retornou status não OK:', resp.status);
+            const respText = await resp.text();
+            console.warn('[BACK] API retornou erro:', resp.status, respText.substring(0, 300));
             return respondWithCache("API indisponível. Preencha manualmente.");
         }
 
         const data = await resp.json();
-        console.log('[BACK] Resposta API Carros:', JSON.stringify(data).substring(0, 300));
+        console.log('[BACK] Resposta completa API Carros:', JSON.stringify(data));
 
         // Alguns retornos podem indicar erro na própria resposta
         if (data?.codigoRetorno && data.codigoRetorno !== "0") {
@@ -221,12 +223,14 @@ app.get("/placa/:placa", async (req, res) => {
         const modelo = data?.modelo || "";
         const cor = data?.cor || "";
 
+        console.log('[BACK] Extraído: marca=' + marca + ', modelo=' + modelo + ', cor=' + cor);
+
         if (!marca && !modelo) {
             console.log('[BACK] Sem marca ou modelo na resposta');
             return respondWithCache("Dados não encontrados. Preencha manualmente.");
         }
 
-        console.log('[BACK] Sucesso! Retornando:', { marca, modelo, cor });
+        console.log('[BACK] Sucesso! Retornando dados');
         return res.json({
             encontrado: true,
             marca,
@@ -236,7 +240,7 @@ app.get("/placa/:placa", async (req, res) => {
         });
 
     } catch (error) {
-        console.error("[BACK] ERRO AO CONSULTAR:", error.message);
+        console.error("[BACK] ERRO AO CONSULTAR:", error.message, error.stack);
         return respondWithCache("Erro na API. Preencha manualmente.");
     }
 });
