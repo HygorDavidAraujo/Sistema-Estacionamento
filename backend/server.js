@@ -11,6 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
+app.disable('etag'); // Desabilita ETag para evitar 304
 app.use(cors());
 app.use(express.json());
 
