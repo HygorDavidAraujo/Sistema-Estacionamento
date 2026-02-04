@@ -13,6 +13,15 @@ const __dirname = dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Middleware para forçar no-cache em todas as respostas
+app.use((_req, res, next) => {
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    next();
+});
+
 app.use((req, _res, next) => {
     if (req.url.startsWith('/api/')) {
         req.url = req.url.replace(/^\/api(?=\/|$)/, '') || '/';
