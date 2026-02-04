@@ -34,7 +34,11 @@ npm install
 
 ## ▶️ Como Executar
 
-1. Configure a variável `DATABASE_URL` apontando para o Postgres
+1. Configure as variáveis de ambiente (copie `.env.example` para `.env`)
+```bash
+DATABASE_URL=postgres://user:password@host:5432/database
+ANPR_FAKE_PLATE=ABC1D23  # Para testes (ou configure ANPR_URL para OCR real)
+```
 
 2. Inicie o servidor backend
 ```bash
@@ -42,9 +46,40 @@ cd backend
 node server.js
 ```
 
-2. Abra o arquivo `index.html` no navegador ou use um servidor local
+3. Abra o arquivo `index.html` no navegador ou use um servidor local
 
 O servidor rodará na porta 3000 (ou próxima disponível 3001-3005)
+
+### 📸 Configurando Reconhecimento de Placas (OBRIGATÓRIO para funcionar)
+
+Para reconhecer placas reais com a câmera, você precisa configurar um serviço de OCR/ANPR:
+
+#### Opção Recomendada: Plate Recognizer (2500 requisições/mês grátis)
+
+1. Crie uma conta em: https://platerecognizer.com/
+2. Copie sua API Key no dashboard
+3. Configure no Vercel (Settings > Environment Variables):
+   - `ANPR_URL` = `https://api.platerecognizer.com/v1/plate-reader/`
+   - `ANPR_API_KEY` = `sua_chave_da_api`
+4. Faça redeploy do projeto
+
+#### Alternativas:
+- **OpenALPR Cloud**: https://www.openalpr.com/cloud-api.html
+- **Sighthound**: https://www.sighthound.com/products/cloud
+
+#### Formato esperado da resposta:
+```json
+{
+  "results": [
+    {
+      "plate": "ABC1D23",
+      "confidence": 0.95
+    }
+  ]
+}
+```
+
+**Nota**: Sem configurar `ANPR_URL`, o reconhecimento automático não funcionará. O OCR local (Tesseract.js) foi desativado no mobile por baixa performance.
 
 ## 🏗️ Estrutura do Projeto
 

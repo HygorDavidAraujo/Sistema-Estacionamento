@@ -261,31 +261,43 @@ app.post("/placa/reconhecer", upload.single('image'), async (req, res) => {
 
     try {
         const form = new FormData();
-        form.append('image', new Blob([req.file.buffer]), req.file.originalname || 'captura.jpg');
-        if (providerKey) form.append('api_key', providerKey);
+        form.append('upload', new Blob([req.file.buffer]), req.file.originalname || 'captura.jpg');
 
-        const resp = await fetch(providerUrl, {
+        const fetchOptions = {
             method: 'POST',
             body: form,
             signal: AbortSignal.timeout(8000)
-        });
+        };
 
+        if (providerKey) {
+            fetchOptions.headers = {
+                'Authorization': `Token ${providerKey}`
+            };
+        }
+
+        console.log('[BACK] Enviando para ANPR:', providerUrl);
+        const resp = await fetch(providerUrl, fetchOptions);
+
+        console.log('[BACK] Resposta ANPR status:', resp.status);
         if (!resp.ok) {
-            console.warn('[BACK] Provider ANPR falhou:', resp.status);
+            const respText = await resp.text().catch(() => '');
+            console.warn('[BACK] Provider ANPR falhou:', resp.status, respText);
             if (fakePlate) return res.json({ placa: fakePlate, origem: 'fake-env' });
-            return res.json({ placa: null, mensagem: 'Provider ANPR indisponível.' });
+            return res.json({ placa: null, mensagem: `Provider ANPR error: ${resp.status}` });
         }
 
         const data = await resp.json().catch(() => ({}));
-        const placa = sanitizePlate(data?.placa || data?.plate || data?.results?.[0]?.plate);
+        console.log('[BACK] Resposta ANPR:', JSON.stringify(data).substring(0, 200));
+        
+        const placa = sanitizePlate(data?.results?.[0]?.plate || data?.placa || data?.plate);
         if (placa) return res.json({ placa, origem: 'provider' });
 
         if (fakePlate) return res.json({ placa: fakePlate, origem: 'fake-env' });
-        return res.json({ placa: null, mensagem: 'Placa não reconhecida.' });
+        return res.json({ placa: null, mensagem: 'Placa não reconhecida pelo serviço.' });
     } catch (err) {
-        console.error('[BACK] Erro no reconhecimento de placa:', err);
+        console.error('[BACK] Erro no reconhecimento de placa:', err.message);
         if (fakePlate) return res.json({ placa: fakePlate, origem: 'fake-env' });
-        return res.json({ placa: null, mensagem: 'Erro ao processar a imagem.' });
+        return res.json({ placa: null, mensagem: `Erro: ${err.message}` });
     }
 });
 
