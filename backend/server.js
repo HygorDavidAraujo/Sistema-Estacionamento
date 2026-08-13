@@ -621,6 +621,40 @@ app.get("/patio/ativo", async (req, res) => {
     }
 });
 
+// ROTA PARA CANCELAR UMA ENTRADA (SEM COBRANÇA)
+app.post("/patio/cancel", requireAuth, async (req, res) => {
+    const { entryId, placa, motivo } = req.body || {};
+    const placaNorm = placa ? sanitizePlate(placa) : null;
+
+    if (!entryId && !placaNorm) {
+        return res.status(400).json({ error: 'entryId ou placa é obrigatório' });
+    }
+
+    try {
+        await dbReady;
+        const result = await query(
+            `SELECT id, entry_id, placa FROM historico WHERE status = 'ativo' AND (entry_id = $1 OR placa = $2) ORDER BY criado_em DESC LIMIT 1`,
+            [entryId || '', placaNorm || '']
+        );
+        const row = result.rows?.[0];
+        if (!row) {
+            return res.status(404).json({ error: 'Entrada ativa não encontrada' });
+        }
+
+        await query(
+            `UPDATE historico SET status = 'cancelado', data_saida = CURRENT_DATE, hora_saida = CURRENT_TIME, valor_pago = NULL, forma_pagamento = NULL WHERE id = $1`,
+            [row.id]
+        );
+
+        await logAudit('cancel', { entry_id: row.entry_id, placa: row.placa, motivo: motivo || null });
+
+        return res.json({ success: true, mensagem: 'Entrada cancelada com sucesso', entry_id: row.entry_id });
+    } catch (err) {
+        console.error('[BACK] Erro ao cancelar entrada:', err);
+        return res.status(500).json({ error: 'Erro ao cancelar entrada' });
+    }
+});
+
 // ROTA PARA OBTER HISTÓRICO COMPLETO
 app.get("/historico", async (req, res) => {
     const { dataInicio, dataFim, dia, mes, ano, tipo } = req.query;

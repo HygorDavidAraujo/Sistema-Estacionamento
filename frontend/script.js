@@ -836,10 +836,37 @@ function bindUI() {
             renderComprovanteEntrada(entry);
             openPopup('comprovanteEntradaPopup');
         }
+        if (e.target.classList.contains('btn-cancel-card')) {
+            const entryId = e.target.dataset.entryId;
+            if (!entryId) return alert('ID da entrada não informado.');
+            openCancelEntryModal(entryId);
+        }
     });
 
     document.querySelectorAll('.popup').forEach(p => p.addEventListener('click', e => { if (e.target === p) closePopupByElement(p); }));
     document.addEventListener('keydown', e => { if (e.key === 'Escape') { document.querySelectorAll('.popup[aria-hidden="false"]').forEach(p => closePopupByElement(p)); toggleMenu(false); }});
+
+    // Cancel entry modal handlers
+    document.getElementById('confirmCancelEntryBtn')?.addEventListener('click', async () => {
+        const entryId = document.getElementById('cancelEntryId')?.value;
+        const motivo = document.getElementById('cancelReason')?.value?.trim() || '';
+        if (!motivo || motivo.length <= 10) {
+            alert('Informe um motivo com mais de 10 caracteres.');
+            return;
+        }
+        const ok = await cancelEntry({ entryId, motivo });
+        if (ok) closePopup('cancelEntryPopup');
+    });
+    document.getElementById('cancelCancelEntryBtn')?.addEventListener('click', () => closePopup('cancelEntryPopup'));
+}
+
+function openCancelEntryModal(entryId) {
+    const idInput = document.getElementById('cancelEntryId');
+    const reasonEl = document.getElementById('cancelReason');
+    if (idInput) idInput.value = entryId || '';
+    if (reasonEl) reasonEl.value = '';
+    openPopup('cancelEntryPopup');
+    setTimeout(() => { try { document.getElementById('cancelReason')?.focus(); } catch (e) {} }, 100);
 }
 
 ///////////////////////////
@@ -1079,7 +1106,7 @@ function clearEntradaForm() {
 ///////////////////////////
 // registrar entrada
 ///////////////////////////
-function registrarEntrada() {
+async function registrarEntrada() {
     const placa = normalizePlaca(document.getElementById('placaEntrada').value);
     const marca = document.getElementById('marcaEntrada').value.trim();
     const modelo = document.getElementById('modeloEntrada').value.trim();
@@ -1098,11 +1125,26 @@ function registrarEntrada() {
         return;
     }
 
-    const existingEntry = StorageService.getEntryByPlate(placa);
+    let existingEntry = StorageService.getEntryByPlate(placa);
     if (existingEntry) {
-        const entradaAnterior = new Date(existingEntry.horaEntradaMs || existingEntry.horaEntrada).toLocaleString();
-        alert(`Este veículo já está no pátio desde ${entradaAnterior}. Não é possível registrar novamente.`);
-        return;
+        // Confirma com o backend caso o cache local esteja desatualizado
+        try {
+            const backendEntry = await fetchActiveEntryFromBackend({ placa });
+            if (!backendEntry) {
+                // Cache local possivelmente stale: remove e prossegue com o registro
+                StorageService.removeEntry(existingEntry.entryId);
+                existingEntry = null;
+            } else {
+                const entradaAnterior = new Date(backendEntry.horaEntradaMs || backendEntry.horaEntrada).toLocaleString();
+                alert(`Este veículo já está no pátio desde ${entradaAnterior}. Não é possível registrar novamente.`);
+                return;
+            }
+        } catch (err) {
+            // Em caso de falha na verificação, assume comportamento conservador: avisa o usuário
+            const entradaAnterior = new Date(existingEntry.horaEntradaMs || existingEntry.horaEntrada).toLocaleString();
+            alert(`Este veículo já está no pátio desde ${entradaAnterior}. Não é possível registrar novamente.`);
+            return;
+        }
     }
 
     const now = new Date();
@@ -1341,6 +1383,56 @@ function registrarSaidaPeloCard(entryId) {
 }
 
 ///////////////////////////
+// cancelar entrada (sem cobrança)
+///////////////////////////
+async function cancelEntry({ entryId, placa, motivo } = {}) {
+    if (!entryId && !placa) return alert('Informe entryId ou placa para cancelar a entrada.');
+    try {
+        const res = await apiFetch(`${BACKEND_BASE}/patio/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entryId, placa, motivo })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            alert('Erro ao cancelar entrada: ' + (data.error || data.mensagem || 'Desconhecido'));
+            return false;
+        }
+
+        const idToRemove = entryId || data.entry_id;
+        if (idToRemove) StorageService.removeEntry(idToRemove);
+        else if (placa) {
+            const e = StorageService.getEntryByPlate(placa);
+            if (e) StorageService.removeEntry(e.entryId);
+        }
+
+        updatePatioCarList();
+        try { carregarDashboard(); } catch (e) {}
+        try { carregarDashboardCaixa(); } catch (e) {}
+
+        alert('Entrada cancelada com sucesso. Não houve cobrança.');
+        return true;
+    } catch (err) {
+        console.error('[front] erro ao cancelar entrada:', err);
+        alert('Erro ao cancelar entrada no servidor');
+        return false;
+    }
+}
+
+// helpers para console/uso rápido
+window.cancelEntryByPlate = async function(placa) {
+    if (!placa) return alert('Informe a placa.');
+    if (!confirm(`Confirma cancelar a entrada da placa ${placa}? Esta ação NÃO gerará cobrança.`)) return;
+    await cancelEntry({ placa: normalizePlaca(placa) });
+};
+
+window.cancelEntryById = async function(entryId) {
+    if (!entryId) return alert('Informe entryId.');
+    if (!confirm(`Confirma cancelar a entrada id ${entryId}? Esta ação NÃO gerará cobrança.`)) return;
+    await cancelEntry({ entryId });
+};
+
+///////////////////////////
 // dashboard vagas
 ///////////////////////////
 async function carregarDashboard() {
@@ -1396,6 +1488,7 @@ function updatePatioCarList() {
                          <p><b>Valor Devido:</b> <span class="valor-devido">R$ ${total.toFixed(2)}</span></p>
                          <div class="card-actions">
                              <button class="btn-saida-card" data-entry-id="${ent.entryId}">Registrar Saída</button>
+                             <button class="btn-cancel-card" data-entry-id="${ent.entryId}" title="Cancelar entrada">Cancelar</button>
                              <button class="btn-print-card" data-entry-id="${ent.entryId}" title="Reimprimir comprovante">🖨️</button>
                          </div>`;
         patio.appendChild(div);

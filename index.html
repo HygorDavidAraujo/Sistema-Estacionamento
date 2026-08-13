@@ -361,6 +361,22 @@
             </div>
         </div>
 
+            <!-- POPUP CANCELAR ENTRADA -->
+            <div class="popup" role="dialog" aria-modal="true" id="cancelEntryPopup" aria-hidden="true">
+                <div class="popup-content">
+                    <button class="close" data-close>&times;</button>
+                    <h3>Cancelar Entrada</h3>
+                    <input type="hidden" id="cancelEntryId" />
+                    <label for="cancelReason">Motivo do cancelamento (mínimo 10 caracteres)</label>
+                    <textarea id="cancelReason" rows="4" placeholder="Descreva o motivo do cancelamento..."></textarea>
+                    <div class="inline-actions">
+                        <button id="confirmCancelEntryBtn" class="btn-primary" type="button">Confirmar Cancelamento</button>
+                        <button id="cancelCancelEntryBtn" class="btn-ghost" type="button">Cancelar</button>
+                    </div>
+                </div>
+            </div>
+
+
         <div id="mensalistasLista" class="historico-conteudo"></div>
         <div class="mensalidade-historico">
             <h4>Histórico de Mensalidades</h4>
