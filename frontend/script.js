@@ -825,19 +825,27 @@ function bindUI() {
 
     // Delegação de eventos para botões de saída nos cards (criados dinamicamente)
     document.getElementById('patioCarList').addEventListener('click', (e) => {
-        if (e.target.classList.contains('btn-saida-card')) {
-            const entryId = e.target.dataset.entryId;
+        const saidaBtn = e.target.closest('.btn-saida-card');
+        const printBtn = e.target.closest('.btn-print-card');
+        const cancelBtn = e.target.closest('.btn-cancel-card');
+
+        if (saidaBtn) {
+            const entryId = saidaBtn.dataset.entryId;
             registrarSaidaPeloCard(entryId);
+            return;
         }
-        if (e.target.classList.contains('btn-print-card')) {
-            const entryId = e.target.dataset.entryId;
+
+        if (printBtn) {
+            const entryId = printBtn.dataset.entryId;
             const entry = StorageService.getEntryById(entryId);
             if (!entry) return alert('Entrada não encontrada.');
             renderComprovanteEntrada(entry);
             openPopup('comprovanteEntradaPopup');
+            return;
         }
-        if (e.target.classList.contains('btn-cancel-card')) {
-            const entryId = e.target.dataset.entryId;
+
+        if (cancelBtn) {
+            const entryId = cancelBtn.dataset.entryId;
             if (!entryId) return alert('ID da entrada não informado.');
             openCancelEntryModal(entryId);
         }
@@ -850,11 +858,7 @@ function bindUI() {
     document.getElementById('confirmCancelEntryBtn')?.addEventListener('click', async () => {
         const entryId = document.getElementById('cancelEntryId')?.value;
         const motivo = document.getElementById('cancelReason')?.value?.trim() || '';
-        if (!motivo || motivo.length <= 10) {
-            alert('Informe um motivo com mais de 10 caracteres.');
-            return;
-        }
-        const ok = await cancelEntry({ entryId, motivo });
+        const ok = await cancelEntry({ entryId, motivo: motivo || 'Cancelamento solicitado pelo usuário' });
         if (ok) closePopup('cancelEntryPopup');
     });
     document.getElementById('cancelCancelEntryBtn')?.addEventListener('click', () => closePopup('cancelEntryPopup'));
