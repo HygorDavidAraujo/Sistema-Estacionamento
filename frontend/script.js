@@ -877,9 +877,17 @@ function openCancelEntryModal(entryId) {
 // popups
 ///////////////////////////
 function openPopup(id) { const el = document.getElementById(id); if (el) el.setAttribute('aria-hidden','false'); }
-function closePopup(id) { const el = document.getElementById(id); if (el) el.setAttribute('aria-hidden','true'); }
+function closePopup(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const active = document.activeElement;
+    if (active && el.contains(active)) active.blur();
+    el.setAttribute('aria-hidden','true');
+}
 function closePopupByElement(el) {
     if (!el) return;
+    const active = document.activeElement;
+    if (active && el.contains(active)) active.blur();
     el.setAttribute('aria-hidden','true');
     if (el.id === 'entradaPopup') fecharCameraEntrada();
     if (el.id === 'saidaPopup') fecharCameraSaida();
