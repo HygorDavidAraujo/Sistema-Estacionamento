@@ -824,7 +824,7 @@ function bindUI() {
     diaristaCheck?.addEventListener('change', syncDiaristaUI);
 
     // Delegação de eventos para botões de saída nos cards (criados dinamicamente)
-    document.getElementById('patioCarList').addEventListener('click', (e) => {
+    document.getElementById('patioCarList').addEventListener('click', async (e) => {
         const saidaBtn = e.target.closest('.btn-saida-card');
         const printBtn = e.target.closest('.btn-print-card');
         const cancelBtn = e.target.closest('.btn-cancel-card');
@@ -847,7 +847,16 @@ function bindUI() {
         if (cancelBtn) {
             const entryId = cancelBtn.dataset.entryId;
             if (!entryId) return alert('ID da entrada não informado.');
-            openCancelEntryModal(entryId);
+            const confirmCancel = window.confirm('Confirma cancelar esta entrada?\n\nA ação NÃO gerará cobrança.');
+            if (!confirmCancel) return;
+            const motivo = window.prompt('Motivo do cancelamento (opcional):', 'Cancelamento solicitado pelo usuário');
+            const ok = await cancelEntry({
+                entryId,
+                motivo: (motivo || '').trim() || 'Cancelamento solicitado pelo usuário'
+            });
+            if (ok) {
+                closePopup('cancelEntryPopup');
+            }
         }
     });
 
@@ -862,6 +871,16 @@ function bindUI() {
         if (ok) closePopup('cancelEntryPopup');
     });
     document.getElementById('cancelCancelEntryBtn')?.addEventListener('click', () => closePopup('cancelEntryPopup'));
+
+    // Fallback extra: bloqueia a ocultação de popup enquanto um campo dentro dele está focado
+    document.querySelectorAll('.popup').forEach((p) => {
+        p.addEventListener('transitionend', () => {
+            const active = document.activeElement;
+            if (active && p.contains(active) && p.getAttribute('aria-hidden') === 'true') {
+                active.blur();
+            }
+        });
+    });
 }
 
 function openCancelEntryModal(entryId) {
