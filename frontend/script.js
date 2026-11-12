@@ -28,11 +28,11 @@ function timeoutSignal(ms) {
 async function detectBackendPort(startPort = 3000, maxPort = 3005) {
     for (let port = startPort; port <= maxPort; port++) {
         try {
-            const res = await fetch(`http://localhost:${port}/placa/test`, {
+            const res = await fetch(`http://localhost:${port}/health`, {
                 method: 'GET',
                 signal: timeoutSignal(1500)
             });
-            if (res.ok || res.status === 400 || res.status === 404 || res.status === 502) {
+            if (res.ok && (await res.json()).service === 'estacionamento') {
                 console.log(`[front] Backend detectado na porta ${port}`);
                 return `http://localhost:${port}`;
             }
@@ -45,7 +45,7 @@ async function detectBackendPort(startPort = 3000, maxPort = 3005) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-    if (IS_LOCAL_ENV) {
+    if (IS_LOCAL_ENV && !window.BACKEND_BASE) {
         BACKEND_BASE = await detectBackendPort();
     }
     window.BACKEND_BASE = BACKEND_BASE;
@@ -59,12 +59,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     carregarTurnoAtual(); // Carrega status do turno
     updatePatioCarList();
     // atualiza tempos no pátio, dashboard vagas e caixa a cada 10s
-    setInterval(() => {
-        syncActiveEntriesFromBackend();
-        updatePatioCarList();
-        carregarDashboard();
-        carregarDashboardCaixa();
-        carregarTurnoAtual();
+    let refreshing = false;
+    setInterval(async () => {
+        if (refreshing || document.hidden) return;
+        refreshing = true;
+        try {
+            await syncActiveEntriesFromBackend();
+            updatePatioCarList();
+            await Promise.allSettled([carregarDashboard(), carregarDashboardCaixa(), carregarTurnoAtual()]);
+        } finally { refreshing = false; }
     }, 10000);
 });
 
@@ -83,6 +86,10 @@ function notify(message, type = 'info', timeout = 3200) {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 200);
     }, timeout);
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
 
 function diffMs(start, end) { return end.getTime() - start.getTime(); }
@@ -294,22 +301,21 @@ async function consultarPlacaAPI(placa) {
 ///////////////////////////
 // banco local (vehicleDB) para cachear resultados e evitar consultas repetidas
 ///////////////////////////
-function saveVehicleInfo(placa, marca, modelo, cor) {
-    if (!placa) return;
-    const key = normalizePlaca(placa);
-    const dbRaw = localStorage.getItem('vehicleDB');
-    let db = dbRaw ? JSON.parse(dbRaw) : {};
-    db[key] = { marca, modelo, cor, updated: new Date().toISOString() };
-    localStorage.setItem('vehicleDB', JSON.stringify(db));
+const VEHICLE_CACHE_TTL = 30 * 86400000;
+function saveVehicleInfo(placa, marca, modelo, cor, origem = 'manual', updated = new Date().toISOString()) {
+    if (!placa || (!marca && !modelo && !cor)) return;
+    try {
+        const db = JSON.parse(localStorage.getItem('vehicleDB') || '{}');
+        db[normalizePlaca(placa)] = { marca, modelo, cor, origem, updated };
+        localStorage.setItem('vehicleDB', JSON.stringify(db));
+    } catch { /* Armazenamento local cheio não interrompe o atendimento. */ }
 }
-
 function getVehicleInfo(placa) {
-    if (!placa) return null;
-    const key = normalizePlaca(placa);
-    const dbRaw = localStorage.getItem('vehicleDB');
-    if (!dbRaw) return null;
-    const db = JSON.parse(dbRaw);
-    return db[key] || null;
+    try {
+        const data = JSON.parse(localStorage.getItem('vehicleDB') || '{}')[normalizePlaca(placa)];
+        if (!data || !Number.isFinite(new Date(data.updated).getTime()) || Date.now() - new Date(data.updated).getTime() > VEHICLE_CACHE_TTL) return null;
+        return data;
+    } catch { return null; }
 }
 
 async function preencherMensalistaPorPlaca(placa) {
@@ -318,6 +324,8 @@ async function preencherMensalistaPorPlaca(placa) {
         if (!res.ok) return;
         const data = await res.json();
         if (!data.success || !data.dados) return;
+        if (normalizePlaca(document.getElementById('placaEntrada').value) !== normalizePlaca(placa)
+            || !document.getElementById('mensalistaCheck')?.checked) return;
         const mensalista = data.dados;
         document.getElementById('mensalistaNome').value = mensalista.nome || '';
         document.getElementById('mensalistaTelefone').value = mensalista.telefone || '';
@@ -339,64 +347,77 @@ async function preencherMensalistaPorPlaca(placa) {
 ///////////////////////////
 function debounce(fn, wait = 450) {
     let t;
-    return function(...args) {
+    const debounced = function(...args) {
         clearTimeout(t);
         t = setTimeout(() => fn.apply(this, args), wait);
     };
+    debounced.cancel = () => clearTimeout(t);
+    return debounced;
 }
 
 ///////////////////////////
 // auto-fill (debounced)
 ///////////////////////////
-const autoFillVehicleDataAPI = debounce(async function() {
-    const placaIn = document.getElementById('placaEntrada');
-    if (!placaIn) return;
-    const placa = normalizePlaca(placaIn.value || '');
-    console.log('[front] autoFillVehicleDataAPI:', placa);
-    if (placa.length < 7 || !isValidPlaca(placa)) {
-        console.log('[front] Placa inválida ou muito curta:', placa.length);
-        return;
-    }
-
-    // 1) Verifica cache local
-    const local = getVehicleInfo(placa);
-    if (local) {
-        console.log('[front] preenchendo via cache local', placa);
-        document.getElementById('marcaEntrada').value = local.marca || "";
-        document.getElementById('modeloEntrada').value = local.modelo || "";
-        document.getElementById('corEntrada').value = local.cor || "";
-        return;
-    }
-
-    // 2) Consulta backend
-    console.log('[front] Consultando API para:', placa);
-    const info = await consultarPlacaAPI(placa);
-    console.log('[front] Resposta API:', info);
-    if (!info) {
-        console.warn('[front] sem dados da API para placa', placa);
-        return;
-    }
-
-    const shouldNotify = info.mensagem && (!info.encontrado || info.origem === 'cache');
-    if (shouldNotify) {
-        alert(info.mensagem);
-    }
-
-    // Se a API (ou cache) trouxe dados, preenche
-    if (info.encontrado || info.marca || info.modelo || info.cor) {
-        document.getElementById('marcaEntrada').value = info.marca || "";
-        document.getElementById('modeloEntrada').value = info.modelo || "";
-        document.getElementById('corEntrada').value = info.cor || "";
-        
-        // Salva cache apenas se encontrou dados
-        if (info.marca || info.modelo) {
-            saveVehicleInfo(placa, info.marca, info.modelo, info.cor);
+let vehicleLookupController = null;
+let vehicleLookupSequence = 0;
+let vehicleFieldPlate = '';
+function lookupStatus(message, state = 'info') {
+    const el = document.getElementById('vehicleLookupStatus');
+    if (el) { el.textContent = message; el.dataset.state = state; }
+}
+function cancelVehicleLookup() {
+    vehicleLookupSequence++;
+    vehicleLookupController?.abort();
+    vehicleLookupController = null;
+    autoFillVehicleDataAPI.cancel();
+}
+const autoFillVehicleDataAPI = debounce(async function(options = {}) {
+    const input = document.getElementById('placaEntrada');
+    const placa = normalizePlaca(input?.value || '');
+    if (!isValidPlaca(placa)) { lookupStatus('Use ABC1234 ou ABC1D23.'); return; }
+    cancelVehicleLookup();
+    const sequence = vehicleLookupSequence;
+    const controller = new AbortController();
+    vehicleLookupController = controller;
+    const initialValues = ['marcaEntrada', 'modeloEntrada', 'corEntrada'].map(id => document.getElementById(id).value);
+    const local = options.refresh ? null : getVehicleInfo(placa);
+    lookupStatus('Consultando marca, modelo e cor…', 'loading');
+    try {
+        const info = local ? { ...local, encontrado: true, origem: 'local' }
+            : await PlateService.lookupPlateAPI(placa, { signal: controller.signal });
+        if (controller.signal.aborted || sequence !== vehicleLookupSequence || normalizePlaca(input.value) !== placa) return;
+        if (info?.encontrado) {
+            ['marca', 'modelo', 'cor'].forEach((key, index) => {
+                const field = document.getElementById(['marcaEntrada', 'modeloEntrada', 'corEntrada'][index]);
+                if (field.value === initialValues[index] && info[key]) field.value = info[key];
+            });
+            const complete = Boolean(info.marca && info.modelo && info.cor);
+            const source = info.origem === 'api' ? 'Dados consultados na API.' : 'Dados recuperados do cadastro salvo.';
+            const remaining = info.cota?.restante;
+            lookupStatus(source + (complete ? ' Confira antes de registrar.' : ' Complete os campos que faltam.')
+                + (Number.isFinite(remaining) ? ' Cota restante: ' + remaining + '.' : ''), complete ? 'success' : 'warning');
+            saveVehicleInfo(placa, info.marca, info.modelo, info.cor, info.fornecedor || info.origem, info.atualizadoEm || info.updated || new Date().toISOString());
+        } else {
+            lookupStatus(info?.mensagem || 'Cadastro não encontrado. Preencha os dados manualmente.', 'warning');
         }
-    } else {
-        // API não encontrou: usuário preenche manualmente
-        console.log('[front] Placa não encontrada na API, preencha manualmente');
+    } catch (error) {
+        if (error.name !== 'AbortError') lookupStatus('Não foi possível consultar. Preencha os dados manualmente.', 'warning');
+    } finally {
+        if (vehicleLookupController === controller) vehicleLookupController = null;
     }
-}, 600);
+}, 550);
+function handlePlateInput() {
+    cancelVehicleLookup();
+    const input = document.getElementById('placaEntrada');
+    const placa = normalizePlaca(input.value);
+    input.value = placa;
+    if (vehicleFieldPlate !== placa) {
+        ['marcaEntrada', 'modeloEntrada', 'corEntrada'].forEach(id => { document.getElementById(id).value = ''; });
+        ['mensalistaNome', 'mensalistaTelefone', 'mensalistaCpf'].forEach(id => { document.getElementById(id).value = ''; });
+        vehicleFieldPlate = placa;
+    }
+    autoFillVehicleDataAPI();
+}
 
 const autoFillMensalistaData = debounce(async function() {
     const mensalistaCheck = document.getElementById('mensalistaCheck');
@@ -411,239 +432,9 @@ const autoFillMensalistaData = debounce(async function() {
 ///////////////////////////
 // captura de placa via câmera
 ///////////////////////////
-let autoPlateScanTimer = null;
-let autoPlateScanBusy = false;
-let autoPlateScanAttempts = 0;
-const AUTO_PLATE_SCAN_INTERVAL = 1800;
-const AUTO_PLATE_SCAN_MAX_ATTEMPTS = 8;
-
-async function blobFromCanvas(canvas, type = 'image/jpeg', quality = 0.92) {
-    return new Promise((resolve, reject) => {
-        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Falha ao capturar imagem.')), type, quality);
-    });
-}
-
-function withTimeout(promise, ms, message = 'timeout') {
-    return Promise.race([
-        promise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
-    ]);
-}
-
-function isMobileDevice() {
-    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-}
-
-async function capturePlateCandidates(videoEl) {
-    if (!videoEl) return [];
-    const width = videoEl.videoWidth || 1280;
-    const height = videoEl.videoHeight || 720;
-    const maxWidth = isMobileDevice() ? 640 : 960;
-    const scale = width > maxWidth ? maxWidth / width : 1;
-    const targetW = Math.max(1, Math.round(width * scale));
-    const targetH = Math.max(1, Math.round(height * scale));
-    const candidates = [];
-
-    const canvas = document.createElement('canvas');
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(videoEl, 0, 0, targetW, targetH);
-    candidates.push(await blobFromCanvas(canvas));
-
-    const cropScales = isMobileDevice() ? [0.6] : [0.7, 0.5];
-    for (const scale of cropScales) {
-        const cw = Math.floor(targetW * scale);
-        const ch = Math.floor(targetH * scale);
-        const sx = Math.floor((targetW - cw) / 2);
-        const sy = Math.floor((targetH - ch) / 2);
-        const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = cw;
-        cropCanvas.height = ch;
-        const cctx = cropCanvas.getContext('2d');
-        cctx.drawImage(canvas, sx, sy, cw, ch, 0, 0, cw, ch);
-        candidates.push(await blobFromCanvas(cropCanvas));
-    }
-
-    return candidates;
-}
-
-async function recognizePlateFromVideo(videoEl) {
-    const blobs = await capturePlateCandidates(videoEl);
-    for (const blob of blobs) {
-        const placa = await PlateService.recognizePlateFromImage(blob);
-        if (placa) return placa;
-    }
-    return null;
-}
-
-function stopAutoPlateScan() {
-    if (autoPlateScanTimer) clearInterval(autoPlateScanTimer);
-    autoPlateScanTimer = null;
-    autoPlateScanBusy = false;
-    autoPlateScanAttempts = 0;
-}
-
-function handlePlateDetected(placa) {
-    if (!placa) return;
-    const placaInput = document.getElementById('placaEntrada');
-    if (placaInput) placaInput.value = placa;
-    autoFillVehicleDataAPI();
-    stopAutoPlateScan();
-    setTimeout(fecharCameraEntrada, 600);
-}
-
-function startAutoPlateScan() {
-    stopAutoPlateScan();
-    const videoEl = document.getElementById('entradaCameraPreview');
-    const statusEl = document.getElementById('entradaCameraStatus');
-    if (!videoEl || !statusEl) return;
-
-    statusEl.textContent = 'Reconhecimento automático ativo...';
-    autoPlateScanTimer = setInterval(async () => {
-        if (autoPlateScanBusy) return;
-        if (!videoEl.srcObject) return;
-        if (autoPlateScanAttempts >= AUTO_PLATE_SCAN_MAX_ATTEMPTS) {
-            statusEl.textContent = 'Não foi possível reconhecer automaticamente. Use Capturar.';
-            stopAutoPlateScan();
-            return;
-        }
-        autoPlateScanBusy = true;
-        autoPlateScanAttempts += 1;
-        try {
-            const placa = await withTimeout(recognizePlateFromVideo(videoEl), 8000, 'tempo_esgotado');
-            if (placa) {
-                statusEl.textContent = `Placa detectada: ${placa}`;
-                handlePlateDetected(placa);
-                return;
-            }
-            const lastStatus = PlateService.getLastStatus?.();
-            if (lastStatus?.mensagem) {
-                statusEl.textContent = lastStatus.mensagem;
-            }
-        } catch (err) {
-            if (err?.message === 'tempo_esgotado') {
-                statusEl.textContent = 'Reconhecimento demorou. Tente aproximar a placa.';
-            }
-            console.warn('[front] falha no reconhecimento automático:', err);
-        } finally {
-            autoPlateScanBusy = false;
-        }
-    }, AUTO_PLATE_SCAN_INTERVAL);
-}
-
-async function iniciarScanPlaca() {
-    const container = document.getElementById('cameraEntradaContainer');
-    const statusEl = document.getElementById('entradaCameraStatus');
-    const videoEl = document.getElementById('entradaCameraPreview');
-    const closeBtn = document.getElementById('fecharCameraEntradaBtn');
-    if (!container || !videoEl) return;
-
-    container.setAttribute('aria-hidden', 'false');
-    closeBtn?.setAttribute('aria-hidden', 'false');
-    if (statusEl) statusEl.textContent = 'Solicitando acesso à câmera...';
-    notify('Abrindo câmera...', 'info', 2000);
-
-    const isSecure = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-    if (!isSecure) {
-        if (statusEl) statusEl.textContent = 'Câmera requer HTTPS. Abra o sistema via HTTPS.';
-        notify('Câmera requer HTTPS (ou localhost).', 'error', 4000);
-        return;
-    }
-
-    try {
-        try {
-            await CameraService.startPreview(
-                videoEl,
-                { 
-                    video: { 
-                        facingMode: 'environment',
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    } 
-                },
-                { zoom: 2 }
-            );
-        } catch (err) {
-            try {
-                await CameraService.startPreview(videoEl, { video: { facingMode: 'environment' } }, { zoom: 2 });
-            } catch (err2) {
-                await CameraService.startPreview(videoEl, { video: true }, { zoom: 2 });
-            }
-        }
-        await CameraService.waitForReady(videoEl, 3000).catch(() => {});
-        if (!videoEl.videoWidth || !videoEl.videoHeight) {
-            if (statusEl) statusEl.textContent = 'Câmera não iniciou. Verifique permissões ou feche outros apps.';
-            notify('Câmera não iniciou. Verifique permissões.', 'error', 3500);
-            fecharCameraEntrada();
-            return;
-        }
-        if (statusEl) statusEl.textContent = 'Centralize a placa para reconhecimento automático.';
-        notify('Câmera pronta para leitura.', 'success', 2200);
-        startAutoPlateScan();
-    } catch (err) {
-        if (statusEl) statusEl.textContent = 'Não foi possível acessar a câmera.';
-        notify('Não foi possível acessar a câmera.', 'error', 3200);
-        alert('Não foi possível acessar a câmera: ' + err.message);
-        fecharCameraEntrada();
-    }
-}
-
-async function capturarPlacaDaCamera() {
-    const videoEl = document.getElementById('entradaCameraPreview');
-    const statusEl = document.getElementById('entradaCameraStatus');
-    if (!videoEl || !statusEl) return;
-    if (!videoEl.srcObject) {
-        statusEl.textContent = 'Ative a câmera antes de capturar.';
-        return;
-    }
-
-    if (videoEl.videoWidth === 0 || videoEl.videoHeight === 0) {
-        statusEl.textContent = 'Aguardando a câmera ficar pronta...';
-        await CameraService.waitForReady(videoEl, 2500).catch(() => {});
-    }
-
-    if (videoEl.videoWidth === 0 || videoEl.videoHeight === 0) {
-        statusEl.textContent = 'Câmera ainda não está pronta. Tente novamente.';
-        return;
-    }
-
-    statusEl.textContent = 'Capturando imagem...';
-    stopAutoPlateScan();
-    try {
-        statusEl.textContent = 'Reconhecendo placa...';
-        const placa = await withTimeout(recognizePlateFromVideo(videoEl), 9000, 'tempo_esgotado');
-        if (placa) {
-            statusEl.textContent = `Placa detectada: ${placa}`;
-            handlePlateDetected(placa);
-        } else {
-            const lastStatus = PlateService.getLastStatus?.();
-            if (lastStatus?.mensagem) {
-                statusEl.textContent = lastStatus.mensagem;
-            } else {
-                statusEl.textContent = 'Não foi possível ler a placa. Tente aproximar ou ajustar o foco.';
-            }
-        }
-    } catch (err) {
-        console.error('[front] erro ao capturar placa:', err);
-        if (err?.message === 'tempo_esgotado') {
-            statusEl.textContent = 'Reconhecimento demorou. Tente novamente.';
-        } else {
-            statusEl.textContent = 'Erro ao capturar imagem.';
-        }
-        alert('Erro ao capturar a placa: ' + err.message);
-    }
-}
-
-function fecharCameraEntrada() {
-    const container = document.getElementById('cameraEntradaContainer');
-    const videoEl = document.getElementById('entradaCameraPreview');
-    const closeBtn = document.getElementById('fecharCameraEntradaBtn');
-    if (container) container.setAttribute('aria-hidden', 'true');
-    if (closeBtn) closeBtn.setAttribute('aria-hidden', 'true');
-    stopAutoPlateScan();
-    CameraService.stopPreview(videoEl);
-}
+function iniciarScanPlaca() { return PlateCamera.open(); }
+function capturarPlacaDaCamera() { return PlateCamera.capture(); }
+function fecharCameraEntrada() { return PlateCamera.close(); }
 
 ///////////////////////////
 // QR Code saída (câmera e leitor USB)
@@ -783,7 +574,9 @@ function bindUI() {
     document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', e => closePopupByElement(e.target.closest('.popup'))));
 
     // input placa => autoFill
-    document.getElementById('placaEntrada').addEventListener('input', autoFillVehicleDataAPI);
+    document.getElementById('placaEntrada').addEventListener('input', handlePlateInput);
+    document.getElementById('refreshPlateBtn').addEventListener('click', () => autoFillVehicleDataAPI({ refresh: true }));
+    PlateCamera.bind();
     document.getElementById('placaEntrada').addEventListener('input', autoFillMensalistaData);
 
     const mensalistaCheck = document.getElementById('mensalistaCheck');
@@ -902,13 +695,15 @@ function closePopup(id) {
     const active = document.activeElement;
     if (active && el.contains(active)) active.blur();
     el.setAttribute('aria-hidden','true');
+    if (id === 'entradaPopup') { cancelVehicleLookup(); fecharCameraEntrada(); }
+    if (id === 'saidaPopup') fecharCameraSaida();
 }
 function closePopupByElement(el) {
     if (!el) return;
     const active = document.activeElement;
     if (active && el.contains(active)) active.blur();
     el.setAttribute('aria-hidden','true');
-    if (el.id === 'entradaPopup') fecharCameraEntrada();
+    if (el.id === 'entradaPopup') { cancelVehicleLookup(); fecharCameraEntrada(); }
     if (el.id === 'saidaPopup') fecharCameraSaida();
 }
 function toggleMenu(show) { const el = document.getElementById('menu'); if (!el) return; el.setAttribute('aria-hidden', show ? 'false' : 'true'); }
@@ -959,16 +754,26 @@ function mapBackendEntryToLocal(row) {
 async function syncActiveEntriesFromBackend() {
     try {
         const res = await apiFetch(`${BACKEND_BASE}/patio/ativos`);
-        if (!res.ok) return false;
+        if (!res.ok) {
+            setConnectionStatus(res.status === 401 ? 'Acesso necessário' : 'Servidor indisponível', 'offline');
+            return false;
+        }
         const data = await res.json();
         if (!data.success || !Array.isArray(data.dados)) return false;
         const entries = data.dados.map(mapBackendEntryToLocal);
         StorageService.replaceEntries(entries);
+        setConnectionStatus('Sincronizado', 'online');
         return true;
     } catch (err) {
+        setConnectionStatus('Sem conexão', 'offline');
         console.warn('[front] falha ao sincronizar pátio:', err.message);
         return false;
     }
+}
+
+function setConnectionStatus(message, state) {
+    const el = document.getElementById('connectionStatus');
+    if (el) { el.textContent = message; el.dataset.state = state; }
 }
 
 async function fetchActiveEntryFromBackend({ entryId, placa }) {
@@ -1122,6 +927,9 @@ function isValidPlaca(p) {
 }
 
 function clearEntradaForm() {
+    cancelVehicleLookup();
+    vehicleFieldPlate = '';
+    lookupStatus('Digite a placa ou use a câmera para preencher o cadastro.');
     document.getElementById('placaEntrada').value = '';
     document.getElementById('marcaEntrada').value = '';
     document.getElementById('modeloEntrada').value = '';
@@ -1149,7 +957,7 @@ async function registrarEntrada() {
     const clienteCpf = document.getElementById('mensalistaCpf').value.trim();
 
     if (!isValidPlaca(placa)) { alert('Placa inválida. Use formato AAA1234 ou AAA1A23.'); return; }
-    if (!placa || !marca || !modelo) { alert('Placa, marca e modelo são obrigatórios.'); return; }
+    if (!placa) { alert('Informe a placa.'); return; }
     if (mensalista && diarista) { alert('Selecione apenas Mensalista ou Diária.'); return; }
     if (mensalista && (!clienteNome || !clienteTelefone || !clienteCpf)) {
         alert('Informe nome, telefone e CPF do mensalista.');
@@ -1272,9 +1080,9 @@ function prepararPagamento(entry) {
         <p><b>Entrada:</b> <span>${horaEntrada.toLocaleString()}</span></p>
         <p><b>Saída:</b> <span>${horaSaida.toLocaleString()}</span></p>
         <p><b>Tempo:</b> <span>${tempoFormatado}</span></p>
-        <p><b>Veículo:</b> <span>${entry.marca} ${entry.modelo}</span></p>
-        <p><b>Placa:</b> <span>${entry.placa}</span></p>
-        <p><b>ID:</b> <span>${entry.entryId}</span></p>
+        <p><b>Veículo:</b> <span>${escapeHtml(entry.marca)} ${escapeHtml(entry.modelo)}</span></p>
+        <p><b>Placa:</b> <span>${escapeHtml(entry.placa)}</span></p>
+        <p><b>ID:</b> <span>${escapeHtml(entry.entryId)}</span></p>
         <p><b>Tipo:</b> <span>${tipo === 'mensalista' ? 'Mensalista' : tipo === 'diarista' ? 'Diária' : 'Avulso'}</span></p>
         <p class="valor-total"><b>Total a Pagar:</b> <span>R$ ${Number(total).toFixed(2)}</span></p>
     `;
@@ -1367,9 +1175,9 @@ function processarSaida(pagamentos = []) {
 
         document.getElementById('comprovantePermanencia').innerHTML = `
             <h3>✅ Comprovante de Saída</h3>
-            <p><b>ID da Entrada:</b> ${dados.entryId}</p>
-            <p><b>Placa:</b> ${dados.placa}</p>
-            <p><b>Veículo:</b> ${dados.marca} ${dados.modelo}</p>
+            <p><b>ID da Entrada:</b> ${escapeHtml(dados.entryId)}</p>
+            <p><b>Placa:</b> ${escapeHtml(dados.placa)}</p>
+            <p><b>Veículo:</b> ${escapeHtml(dados.marca)} ${escapeHtml(dados.modelo)}</p>
             <p><b>Entrada:</b> ${dados.horaEntrada.toLocaleString()}</p>
             <p><b>Saída:</b> ${dados.horaSaida.toLocaleString()}</p>
             <p><b>Tempo:</b> ${dados.tempo}</p>
@@ -1511,16 +1319,16 @@ function updatePatioCarList() {
                 : '';
         const div = document.createElement('div');
         div.className = 'car-item';
-        div.innerHTML = `<p><b>Placa:</b> ${ent.placa} ${badge}</p>
-                         <p><b>Marca:</b> ${ent.marca}</p>
-                         <p><b>Modelo:</b> ${ent.modelo}</p>
-                         <p><b>Cor:</b> ${ent.cor}</p>
+        div.innerHTML = `<p><b>Placa:</b> ${escapeHtml(ent.placa)} ${badge}</p>
+                         <p><b>Marca:</b> ${escapeHtml(ent.marca)}</p>
+                         <p><b>Modelo:</b> ${escapeHtml(ent.modelo)}</p>
+                         <p><b>Cor:</b> ${escapeHtml(ent.cor)}</p>
                          <p><b>Tempo no Pátio:</b> ${tempoFormatado}</p>
                          <p><b>Valor Devido:</b> <span class="valor-devido">R$ ${total.toFixed(2)}</span></p>
                          <div class="card-actions">
-                             <button class="btn-saida-card" data-entry-id="${ent.entryId}">Registrar Saída</button>
-                             <button class="btn-cancel-card" data-entry-id="${ent.entryId}" title="Cancelar entrada">Cancelar</button>
-                             <button class="btn-print-card" data-entry-id="${ent.entryId}" title="Reimprimir comprovante">🖨️</button>
+                             <button class="btn-saida-card" data-entry-id="${escapeHtml(ent.entryId)}">Registrar Saída</button>
+                             <button class="btn-cancel-card" data-entry-id="${escapeHtml(ent.entryId)}" title="Cancelar entrada">Cancelar</button>
+                             <button class="btn-print-card" data-entry-id="${escapeHtml(ent.entryId)}" title="Reimprimir comprovante">🖨️</button>
                          </div>`;
         patio.appendChild(div);
     });
@@ -1692,9 +1500,9 @@ function renderMensalistas(lista) {
     lista.forEach((row) => {
         const venc = row.vencimento ? String(row.vencimento).slice(0, 10) : '-';
         html += `<tr>
-            <td>${row.placa}</td>
-            <td>${row.nome}</td>
-            <td>${row.cpf || '-'}</td>
+            <td>${escapeHtml(row.placa)}</td>
+            <td>${escapeHtml(row.nome)}</td>
+            <td>${escapeHtml(row.cpf || '-')}</td>
             <td>${venc}</td>
             <td>${row.ativo === false ? 'Inativo' : 'Ativo'}</td>
             <td>
@@ -1748,7 +1556,7 @@ async function carregarHistoricoMensalidade(row) {
             return;
         }
 
-        let html = `<h5>${row.nome} - ${row.placa}</h5>`;
+        let html = `<h5>${escapeHtml(row.nome)} - ${escapeHtml(row.placa)}</h5>`;
         html += '<table><tr><th>Data</th><th>Hora</th><th>Forma</th><th>Valor</th><th>Obs.</th></tr>';
         lista.forEach((item) => {
             html += `<tr>
@@ -1937,9 +1745,9 @@ function carregarHistoricoCompleto(filtros = {}) {
             let html = '<h4>Histórico Completo</h4><table><tr><th>Placa</th><th>Tipo</th><th>Marca/Modelo</th><th>Entrada</th><th>Saída</th><th>Tempo</th><th>Valor</th><th>Status</th></tr>';
             data.dados.forEach(row => {
                 html += `<tr>
-                    <td>${row.placa}</td>
+                    <td>${escapeHtml(row.placa)}</td>
                     <td>${formatTipoRegistro(row)}</td>
-                    <td>${row.marca} ${row.modelo}</td>
+                    <td>${escapeHtml(row.marca)} ${escapeHtml(row.modelo)}</td>
                     <td>${row.data_entrada} ${row.hora_entrada}</td>
                     <td>${row.data_saida || '-'} ${row.hora_saida || '-'}</td>
                     <td>${row.tempo_permanencia || '-'}</td>
@@ -2009,7 +1817,7 @@ function buscarPorPlaca() {
                     <td>${row.data_saida || '-'}</td>
                     <td>${row.hora_saida || '-'}</td>
                     <td>${row.tempo_permanencia || '-'}</td>
-                    <td>R$ ${(row.valor_pago || 0).toFixed(2)}</td>
+                    <td>R$ ${Number(row.valor_pago || 0).toFixed(2)}</td>
                     <td>${row.status}</td>
                 </tr>`;
             });
@@ -2028,7 +1836,7 @@ function buscarPorPlaca() {
 async function carregarDashboardCaixa() {
     try {
         const dados = await fetchDashboardCaixaData();
-        const { total_recebido, total_dinheiro, total_credito, total_debito, total_pix, total_transacoes } = dados;
+        const { total_recebido = 0, total_dinheiro = 0, total_credito = 0, total_debito = 0, total_pix = 0, total_transacoes = 0 } = dados;
         const isMasked = document.getElementById('caixaTotalRecebido').classList.contains('masked');
 
         document.getElementById('caixaTotalRecebido').dataset.valor = total_recebido;

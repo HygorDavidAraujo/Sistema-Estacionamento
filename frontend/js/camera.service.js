@@ -1,5 +1,6 @@
 (function() {
-    const streams = new WeakMap();
+    const streams = new Map();
+    const generations = new Map();
 
     function normalizeVideoSize(video) {
         if (!video) return { width: 640, height: 480 };
@@ -9,6 +10,7 @@
     }
 
     async function startPreview(videoEl, constraints = { video: { facingMode: 'environment' } }, options = {}) {
+        if (!videoEl) throw new Error('Vídeo não encontrado.');
         const isSecure = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
         if (!isSecure) {
             throw new Error('Acesso à câmera requer HTTPS (ou localhost).');
@@ -24,16 +26,33 @@
             videoEl.autoplay = true;
             videoEl.muted = true;
         }
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        stopPreview(videoEl);
+        const version = generations.get(videoEl);
+        let permissionTimer;
+        const permission = navigator.mediaDevices.getUserMedia({ ...constraints, audio: false }).then(stream => {
+            if (generations.get(videoEl) !== version) {
+                stream.getTracks().forEach(track => track.stop());
+                throw new DOMException('Abertura da câmera cancelada.', 'AbortError');
+            }
+            return stream;
+        });
+        let stream;
+        try {
+            stream = await Promise.race([permission, new Promise((_, reject) => {
+                permissionTimer = setTimeout(() => {
+                    if (generations.get(videoEl) === version) stopPreview(videoEl);
+                    reject(new Error('A câmera não respondeu. Confira a permissão do navegador ou envie uma foto.'));
+                }, 15000);
+            })]);
+        } finally { clearTimeout(permissionTimer); }
         videoEl.srcObject = stream;
         streams.set(videoEl, stream);
         try {
             await videoEl.play();
+            if (options.waitForReady !== false) await waitForReady(videoEl, options.readyTimeout || 5000);
         } catch (err) {
-            throw new Error('Falha ao iniciar o vídeo da câmera.');
-        }
-        if (options.waitForReady !== false) {
-            await waitForReady(videoEl, options.readyTimeout || 2000).catch(() => {});
+            if (generations.get(videoEl) === version) stopPreview(videoEl);
+            throw err;
         }
         const zoomValue = typeof options.zoom === 'number' ? options.zoom : null;
         if (zoomValue && zoomValue > 0) {
@@ -89,6 +108,8 @@
     }
 
     function stopPreview(videoEl) {
+        if (!videoEl) return;
+        generations.set(videoEl, (generations.get(videoEl) || 0) + 1);
         const stream = streams.get(videoEl) || videoEl?.srcObject;
         if (stream && stream.getTracks) {
             stream.getTracks().forEach(t => t.stop());
@@ -98,11 +119,7 @@
     }
 
     function stopAll() {
-        streams.forEach((stream, videoEl) => {
-            if (stream && stream.getTracks) stream.getTracks().forEach(t => t.stop());
-            if (videoEl) videoEl.srcObject = null;
-        });
-        streams.clear();
+        Array.from(generations.keys()).forEach(stopPreview);
     }
 
     function captureFrame(videoEl, canvasEl) {

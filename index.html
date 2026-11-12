@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Sistema de Estacionamento</title>
+    <title>Estacionamento · Central de Operação</title>
+    <meta name="theme-color" content="#123a52" />
     <link rel="stylesheet" href="frontend/style.css" />
 </head>
 <body>
 <header>
-    <h1>Sistema de Estacionamento</h1>
+    <div class="brand"><span class="brand-symbol" aria-hidden="true">P</span><div><span class="eyebrow">CENTRAL DE OPERAÇÃO</span><h1>Estacionamento</h1></div></div>
     <div class="header-actions">
         <button id="btnEntrada">Registrar Entrada</button>
         <button id="btnSaida">Registrar Saída</button>
@@ -25,7 +26,7 @@
     <main id="main">
         <!-- DASHBOARD DE VAGAS -->
         <section id="dashboard">
-            <h2>Dashboard de Vagas</h2>
+            <div class="section-heading"><div><span class="eyebrow">VISÃO GERAL</span><h2>Seu estacionamento, agora</h2></div><span id="connectionStatus" class="connection-status" role="status">Conectando…</span></div>
             <div class="dashboard-cards">
                 <div class="dashboard-card total">
                     <h3>Total de Vagas</h3>
@@ -118,18 +119,35 @@
         <h3>Entrada de Veículo</h3>
 
         <label for="placaEntrada">Placa</label>
-        <input id="placaEntrada" type="text" placeholder="AAA0A00" autocomplete="off" />
+        <input id="placaEntrada" class="plate-input" type="text" placeholder="ABC1D23" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="8" aria-describedby="vehicleLookupStatus" />
+        <p id="vehicleLookupStatus" class="lookup-status" role="status">Digite a placa ou use a câmera para preencher o cadastro.</p>
 
         <div class="inline-actions">
-            <button id="scanPlacaBtn" type="button">Scanear Placa</button>
+            <button id="scanPlacaBtn" type="button">Ler com a câmera</button>
+            <label class="photo-button" for="platePhotoInput" role="button" tabindex="0">Enviar foto</label>
+            <input id="platePhotoInput" type="file" accept="image/jpeg,image/png,image/webp" hidden />
+            <button id="refreshPlateBtn" type="button" class="btn-ghost">Consultar novamente</button>
             <button id="fecharCameraEntradaBtn" type="button" class="btn-ghost" aria-hidden="true">Fechar Câmera</button>
         </div>
 
         <div id="cameraEntradaContainer" class="camera-container" aria-hidden="true">
-            <video id="entradaCameraPreview" autoplay muted playsinline></video>
+            <div class="camera-viewport"><video id="entradaCameraPreview" autoplay muted playsinline></video><div id="plateGuide" class="plate-guide" aria-hidden="true"></div><span class="camera-guide-label">Alinhe a placa dentro da moldura</span></div>
+            <div class="camera-controls">
+                <label>Câmera<select id="cameraDevice" aria-label="Selecionar câmera"></select></label>
+                <label hidden>Zoom<input id="cameraZoom" type="range" aria-label="Zoom da câmera" /></label>
+                <button id="cameraTorchBtn" type="button" class="btn-ghost" hidden>Ligar lanterna</button>
+                <label class="checkbox-item"><input id="cameraMotorcycle" type="checkbox" /> Placa de moto (duas linhas)</label>
+            </div>
             <div class="camera-actions">
                 <button id="capturarPlacaBtn" type="button">Capturar Placa</button>
-                <span class="camera-status" id="entradaCameraStatus">Centralize a placa na área do vídeo.</span>
+                <span class="camera-status" id="entradaCameraStatus" role="status">Centralize a placa na área do vídeo.</span>
+            </div>
+            <div id="plateReview" class="plate-review" hidden>
+                <img id="plateCapturePreview" alt="Recorte usado para a leitura da placa" />
+                <label for="plateDetectedInput">Confira a placa identificada</label>
+                <input id="plateDetectedInput" class="plate-input" maxlength="8" autocapitalize="characters" spellcheck="false" />
+                <p id="plateReadSource"></p><div id="plateCandidates" class="inline-actions"></div>
+                <div class="inline-actions"><button id="acceptPlateBtn" type="button">Usar esta placa</button><button id="retryPlateBtn" type="button" class="btn-ghost">Ler novamente</button></div>
             </div>
         </div>
 
@@ -500,12 +518,13 @@
 <!-- Libs externas leves para QR Code e leitura de QR -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" crossorigin="anonymous"></script>
 
 <!-- Serviços modulares -->
 <script src="frontend/js/camera.service.js"></script>
 <script src="frontend/js/plate.service.js"></script>
 <script src="frontend/js/ocr.service.js"></script>
+<script src="frontend/js/plate-camera.js"></script>
 <script src="frontend/js/qrcode.service.js"></script>
 <script src="frontend/js/qr-reader.service.js"></script>
 <script src="frontend/js/storage.service.js"></script>

@@ -1,11 +1,12 @@
 import express from "express";
-import 'dotenv/config';
-import fetch from "node-fetch";
+import './env.js';
 import cors from "cors";
 import { initDb, query, tx } from "./db.js";
-import multer from "multer";
 import { fileURLToPath } from "url";
-import { dirname } from "path";
+import { dirname, resolve } from "path";
+import { createPlateRouter } from "./routes/plates.js";
+import { createVehicleRepository } from "./services/vehicle-repository.js";
+import { isValidPlate } from "./services/plate-domain.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -29,7 +30,8 @@ app.use((req, _res, next) => {
     }
     next();
 });
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
+app.use('/frontend', express.static(resolve(__dirname, '../frontend')));
+app.get(['/', '/index.html'], (_req, res) => res.sendFile(resolve(__dirname, '../index.html')));
 function normalizeDateParam(value) {
     if (!value) return null;
     const str = String(value).trim();
@@ -45,7 +47,12 @@ function normalizeDateParam(value) {
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 
 function requireAuth(req, res, next) {
-    if (!ADMIN_TOKEN) return next();
+    if (!ADMIN_TOKEN) {
+        if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+            return res.status(503).json({ error: 'Configure ADMIN_TOKEN no servidor para liberar o acesso.' });
+        }
+        return next();
+    }
     const token = req.headers['x-admin-token'] || req.headers['X-Admin-Token'];
     if (!token || token !== ADMIN_TOKEN) {
         return res.status(401).json({ error: 'Acesso não autorizado' });
@@ -64,13 +71,11 @@ async function logAudit(acao, detalhes = {}) {
     }
 }
 
-const dbReady = initDb().catch((err) => {
+let databaseReady = false;
+const dbReady = initDb().then(() => { databaseReady = true; }).catch((err) => {
     console.error("[BACK] Falha ao inicializar schema:", err);
 });
 
-// API gratuita (sem credencial) para consulta de placa
-// Fonte: apicarros.com - retorna marca, modelo, cor, etc.
-const FREE_API = 'https://apicarros.com/v1/consulta';
 
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Sao_Paulo';
 
@@ -159,171 +164,14 @@ function addMonthsToISODate(baseDateStr, months) {
     return dt.toISOString().slice(0, 10);
 }
 
-async function getLastVehicleData(placa) {
-    try {
-        const result = await query(
-            `SELECT marca, modelo, cor FROM historico WHERE placa = $1 ORDER BY criado_em DESC LIMIT 1`,
-            [placa]
-        );
-        return result.rows?.[0] || null;
-    } catch (err) {
-        console.error('[BACK] Erro ao buscar cache de placa:', err);
-        return null;
-    }
-}
+// Consultas e reconhecimento independentes do fluxo financeiro.
+app.use(createPlateRouter({
+    repository: createVehicleRepository(query, async () => { await dbReady; return databaseReady; }),
+    auth: requireAuth
+}));
 
-// ROTA PARA CONSULTAR A PLACA (API gratuita)
-app.get("/placa/:placa", async (req, res) => {
-    const placa = sanitizePlate(req.params.placa);
-    console.log("[BACK] GET /placa/:placa chamado com:", placa);
-
-    if (placa.length < 7) {
-        console.log("[BACK] Placa muito curta, rejeitando");
-        return res.status(400).json({ error: "Placa inválida", encontrado: false });
-    }
-
-    await dbReady;
-    const cache = await getLastVehicleData(placa);
-    console.log("[BACK] Cache local:", cache);
-    
-    const respondWithCache = (mensagem) => {
-        console.log("[BACK] Respondendo com cache ou erro:", mensagem);
-        return res.json({
-            encontrado: false,
-            marca: cache?.marca || "",
-            modelo: cache?.modelo || "",
-            cor: cache?.cor || "",
-            origem: cache ? 'cache' : 'api',
-            mensagem: mensagem || "API indisponível. Preencha manualmente."
-        });
-    };
-
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4500);
-
-        const url = `${FREE_API}/${encodeURIComponent(placa)}.json`;
-        console.log('[BACK] Chamando API Carros:', url);
-
-        const resp = await fetch(url, { 
-            method: 'GET',
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            signal: controller.signal
-        });
-        clearTimeout(timeout);
-
-        console.log('[BACK] Resposta API Carros status:', resp.status, resp.statusText);
-        
-        if (!resp.ok) {
-            const respText = await resp.text();
-            console.warn('[BACK] API retornou erro:', resp.status, respText.substring(0, 300));
-            return respondWithCache("API indisponível. Preencha manualmente.");
-        }
-
-        const data = await resp.json();
-        console.log('[BACK] Resposta completa API Carros:', JSON.stringify(data));
-
-        // Alguns retornos podem indicar erro na própria resposta
-        if (data?.codigoRetorno && data.codigoRetorno !== "0") {
-            console.warn('[BACK] API retornou código de erro:', data.codigoRetorno);
-            return respondWithCache("Placa não encontrada. Preencha manualmente.");
-        }
-
-        const marca = data?.marca || "";
-        const modelo = data?.modelo || "";
-        const cor = data?.cor || "";
-
-        console.log('[BACK] Extraído: marca=' + marca + ', modelo=' + modelo + ', cor=' + cor);
-
-        if (!marca && !modelo) {
-            console.log('[BACK] Sem marca ou modelo na resposta');
-            return respondWithCache("Dados não encontrados. Preencha manualmente.");
-        }
-
-        console.log('[BACK] Sucesso! Retornando dados');
-        return res.json({
-            encontrado: true,
-            marca,
-            modelo,
-            cor,
-            origem: 'api'
-        });
-
-    } catch (error) {
-        console.error("[BACK] ERRO AO CONSULTAR:", error.message, error.stack);
-        return respondWithCache("Erro na API. Preencha manualmente.");
-    }
-});
-
-// ROTA PARA RECONHECER PLACA VIA IMAGEM (mock com suporte a provider externo)
-app.post("/placa/reconhecer", upload.single('image'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'Imagem é obrigatória' });
-    }
-
-    // Permite envio de pista manual para testes/ambiente offline
-    if (req.body?.hint) {
-        const hint = sanitizePlate(req.body.hint);
-        if (hint) return res.json({ placa: hint, origem: 'hint' });
-    }
-
-    const providerUrl = process.env.ANPR_URL;
-    const providerKey = process.env.ANPR_API_KEY;
-
-    const fakePlate = sanitizePlate(process.env.ANPR_FAKE_PLATE || '');
-
-    if (!providerUrl) {
-        if (fakePlate) {
-            return res.json({ placa: fakePlate, origem: 'fake-env' });
-        }
-        return res.json({ placa: null, mensagem: 'Serviço de OCR não configurado no backend (defina ANPR_URL ou ANPR_FAKE_PLATE).' });
-    }
-
-    if (typeof FormData === 'undefined' || typeof Blob === 'undefined') {
-        return res.json({ placa: null, mensagem: 'Runtime sem suporte a FormData/Blob para ANPR. Use Node 18+ ou configure provider diferente.' });
-    }
-
-    try {
-        const form = new FormData();
-        form.append('upload', new Blob([req.file.buffer]), req.file.originalname || 'captura.jpg');
-
-        const fetchOptions = {
-            method: 'POST',
-            body: form,
-            signal: AbortSignal.timeout(8000)
-        };
-
-        if (providerKey) {
-            fetchOptions.headers = {
-                'Authorization': `Token ${providerKey}`
-            };
-        }
-
-        console.log('[BACK] Enviando para ANPR:', providerUrl);
-        const resp = await fetch(providerUrl, fetchOptions);
-
-        console.log('[BACK] Resposta ANPR status:', resp.status);
-        if (!resp.ok) {
-            const respText = await resp.text().catch(() => '');
-            console.warn('[BACK] Provider ANPR falhou:', resp.status, respText);
-            if (fakePlate) return res.json({ placa: fakePlate, origem: 'fake-env' });
-            return res.json({ placa: null, mensagem: `Provider ANPR error: ${resp.status}` });
-        }
-
-        const data = await resp.json().catch(() => ({}));
-        console.log('[BACK] Resposta ANPR:', JSON.stringify(data).substring(0, 200));
-        
-        const placa = sanitizePlate(data?.results?.[0]?.plate || data?.placa || data?.plate);
-        if (placa) return res.json({ placa, origem: 'provider' });
-
-        if (fakePlate) return res.json({ placa: fakePlate, origem: 'fake-env' });
-        return res.json({ placa: null, mensagem: 'Placa não reconhecida pelo serviço.' });
-    } catch (err) {
-        console.error('[BACK] Erro no reconhecimento de placa:', err.message);
-        if (fakePlate) return res.json({ placa: fakePlate, origem: 'fake-env' });
-        return res.json({ placa: null, mensagem: `Erro: ${err.message}` });
-    }
-});
+// Leitura de dados operacionais segue a mesma proteção das alterações.
+app.use(['/patio', '/historico', '/mensalistas', '/relatorio', '/caixa', '/auditoria', '/backup', '/restore'], requireAuth);
 
 // ROTA PARA REGISTRAR ENTRADA DE VEÍCULO
 app.post("/entrada", requireAuth, async (req, res) => {
@@ -348,6 +196,7 @@ app.post("/entrada", requireAuth, async (req, res) => {
     
     // Normaliza placa para maiúsculas
     placa = sanitizePlate(placa);
+    if (!isValidPlate(placa)) return res.status(400).json({ error: 'Placa inválida. Use ABC1234 ou ABC1D23.' });
     const entry_id = entryId || `ent-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
     try {

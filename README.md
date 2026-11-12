@@ -1,201 +1,100 @@
-# Sistema de Estacionamento
+# Sistema de estacionamento
 
-Sistema completo para gerenciamento de estacionamento com consulta de veículos e controle de entrada/saída.
+Central de operação em português com controle de entrada/saída, pátio, mensalistas, caixa, consulta cadastral por placa e reconhecimento pela câmera ou foto.
 
-## 🚀 Funcionalidades
+## Executar
 
-- **Consulta de Veículos**: Integração com API gratuita para buscar marca, modelo e cor por placa
-- **Controle de Entrada/Saída**: Registro completo com horários e cálculo automático de permanência
-- **Histórico Completo**: Filtros por dia, mês, ano e placa
-- **Banco de Dados Postgres (Neon)**: Armazenamento persistente de todas as operações
-- **Configurações Persistentes**: Valores de hora inicial, adicional e tolerância armazenados no banco
-- **Validação de Placas**: Suporte para formato Mercosul (AAA1A23) e antigo (AAA1234)
-- **Cálculo Automático**: Valor devido atualizado a cada 10 segundos
+Requisitos: Node.js 22 ou superior, npm e PostgreSQL (local ou Neon).
 
-## 📋 Pré-requisitos
+1. Configure `backend/.env` a partir de `backend/.env.example` caso o arquivo ainda não exista. Preserve os valores de um `.env` existente.
+2. Defina `DATABASE_URL` e, para conexão SSL do Neon, `PGSSLMODE=require`.
+3. Instale e inicie:
 
-- Node.js (versão 18 ou superior)
-- npm ou yarn
-- Postgres (local ou Neon)
-
-## 🔧 Instalação
-
-1. Clone o repositório
-```bash
-git clone [URL_DO_REPOSITORIO]
-cd "Sistema Estacionamento"
-```
-
-2. Instale as dependências do backend
-```bash
+```powershell
 cd backend
 npm install
+npm start
 ```
 
-## ▶️ Como Executar
+Abra **http://localhost:3000**. O mesmo servidor atende frontend e API. Se a porta estiver ocupada, observe a próxima porta informada no terminal. Também é possível iniciar da raiz com `node backend/server.js`; a configuração do backend será carregada da mesma forma.
 
-1. Configure as variáveis de ambiente (copie `.env.example` para `.env`)
-```bash
-DATABASE_URL=postgres://user:password@host:5432/database
-ANPR_FAKE_PLATE=ABC1D23  # Para testes (ou configure ANPR_URL para OCR real)
+O schema é aplicado na inicialização sem exclusão dos dados existentes. A nova tabela `veiculos_cache` armazena consultas mesmo quando nenhuma entrada é registrada.
+
+## Consulta gratuita: marca, modelo e cor
+
+O fornecedor padrão é **FIPE API/Parallelum, endpoint de placas Alpha**. Ele documenta os campos `brand`, `model` e `color`. A integração faz a normalização para `marca`, `modelo` e `cor`.
+
+```dotenv
+VEHICLE_LOOKUP_PROVIDER=parallelum
+VEHICLE_CACHE_DAYS=30
+# FIPE_SUBSCRIPTION_TOKEN=seu_token_gratuito_opcional
 ```
 
-2. Inicie o servidor backend
-```bash
+Limites documentados em 12/11/2026: **5 consultas mensais sem token; 10 consultas bem-sucedidas mensais com token gratuito**. O endpoint está em Alpha, pode mudar e não garante disponibilidade ou cobertura de todas as placas. A documentação não esclarece o agrupamento da cota anônima entre clientes; em hospedagens compartilhadas, não presuma uma cota exclusiva por estacionamento.
+
+O cache do servidor é consultado primeiro, e consultas simultâneas da mesma placa compartilham a chamada externa. Não há migração automática para serviço pago. Quando a cota acaba, o cadastro já salvo continua disponível e a interface permite atendimento manual, inclusive com marca/modelo ainda desconhecidos.
+
+Fonte: [documentação do endpoint de placas](https://fipe.api.br/docs/api/busca-por-placa-alpha).
+
+Alternativas opcionais, selecionadas explicitamente no servidor:
+
+- `VEHICLE_LOOKUP_PROVIDER=simplesapi` com `SIMPLES_API_KEY`.
+- `VEHICLE_LOOKUP_PROVIDER=apiplacas` com `API_PLACAS_TOKEN`.
+
+Esses serviços têm regras próprias de cobrança. Configure somente se desejar utilizá-los. Os tokens nunca são enviados ao navegador. Cada serviço possui adaptador próprio; não basta trocar a URL.
+
+## Câmera e envio de foto
+
+1. Abra **Registrar entrada → Ler com a câmera**.
+2. Permita o acesso e alinhe a placa dentro da moldura.
+3. Escolha outra câmera, ajuste o zoom ou ligue a lanterna se o dispositivo oferecer esses recursos.
+4. Para motos, marque **Placa de moto (duas linhas)**.
+5. A leitura automática faz até três tentativas sequenciais. Você também pode usar **Capturar placa** ou **Enviar foto**.
+6. Confira o recorte e os sete caracteres; use **Usar esta placa** para preencher o formulário e consultar os dados cadastrais.
+
+O OCR usa **Tesseract.js 5.1.1 no próprio navegador**, inclusive no celular, sem cobrança por leitura. A primeira execução baixa biblioteca/modelo pela internet. Precisão depende de enquadramento, nitidez e iluminação; uma leitura sintética de teste não representa a taxa de acerto no estacionamento.
+
+Na câmera, são comparados três quadros localmente e o recorte parte dos pixels originais do vídeo. Não há envio contínuo de quadros ao servidor. Fechar a câmera, fechar o formulário ou ocultar a página cancela a operação e impede a aplicação de resultados antigos.
+
+Opcionalmente, configure **Plate Recognizer Snapshot** no servidor:
+
+```dotenv
+ANPR_API_KEY=sua_chave
+# URL padrão já é usada quando existe uma chave.
+ANPR_URL=https://api.platerecognizer.com/v1/plate-reader/
+```
+
+Com a nuvem configurada, uma captura pode enviar **uma imagem** ao fornecedor se o OCR local não encontrar placa. Confirme o plano e a cota da conta. O adaptador espera o contrato do Plate Recognizer; outros fornecedores não são compatíveis apenas mudando a URL. Placas simuladas e `hint` foram removidos do fluxo real.
+
+A câmera exige **HTTPS ou localhost**. Para abrir pelo celular, use a versão HTTPS; um endereço HTTP da rede local pode bloquear `getUserMedia`. Enviar foto continua sendo uma alternativa de captura.
+
+## Acesso e hospedagem
+
+Defina um `ADMIN_TOKEN` longo e exclusivo no ambiente de produção e informe-o pelo botão **Acesso**. Consultas de placa e leitura de dados operacionais exigem o token quando configurado. Em Vercel ou `NODE_ENV=production`, operações protegidas ficam indisponíveis se o token não tiver sido configurado.
+
+Para Vercel, mantenha as variáveis do banco, o `ADMIN_TOKEN` e as opções de consulta no ambiente do projeto. A API está disponível em `/api`. Alterações locais precisam ser publicadas para aparecer na versão hospedada.
+
+O limite por IP das rotas de consulta/reconhecimento é local à instância do servidor; não constitui uma cota global entre instâncias serverless.
+
+## Verificação
+
+```powershell
 cd backend
-node server.js
+npm test
+npm run test:browser
+npm audit
 ```
 
-3. Abra o arquivo `index.html` no navegador ou use um servidor local
+Os testes unitários e HTTP usam dados simulados e não acessam o banco real nem fornecedores. Os testes de navegador usam um servidor isolado, vídeo sintético e uma imagem de placa gerada para testar o Tesseract real. O navegador configurado é Microsoft Edge; ajuste `channel` em `playwright.config.js` se usar outro Chromium instalado.
 
-O servidor rodará na porta 3000 (ou próxima disponível 3001-3005)
+O relatório inicial está em `ANALISE_TECNICA.md`; ele descreve o estado anterior às correções desta implementação.
 
-### 📸 Configurando Reconhecimento de Placas (OBRIGATÓRIO para funcionar)
+## Estrutura
 
-Para reconhecer placas reais com a câmera, você precisa configurar um serviço de OCR/ANPR:
-
-#### Opção Recomendada: Plate Recognizer (2500 requisições/mês grátis)
-
-1. Crie uma conta em: https://platerecognizer.com/
-2. Copie sua API Key no dashboard
-3. Configure no Vercel (Settings > Environment Variables):
-   - `ANPR_URL` = `https://api.platerecognizer.com/v1/plate-reader/`
-   - `ANPR_API_KEY` = `sua_chave_da_api`
-4. Faça redeploy do projeto
-
-#### Alternativas:
-- **OpenALPR Cloud**: https://www.openalpr.com/cloud-api.html
-- **Sighthound**: https://www.sighthound.com/products/cloud
-
-#### Formato esperado da resposta:
-```json
-{
-  "results": [
-    {
-      "plate": "ABC1D23",
-      "confidence": 0.95
-    }
-  ]
-}
-```
-
-**Nota**: Sem configurar `ANPR_URL`, o reconhecimento automático não funcionará. O OCR local (Tesseract.js) foi desativado no mobile por baixa performance.
-
-## 🏗️ Estrutura do Projeto
-
-```
-Sistema Estacionamento/
-├── backend/
-│   ├── server.js           # Servidor Express com rotas da API
-│   ├── db.js               # Conexão com Postgres + bootstrap do schema
-│   ├── schema.sql          # Schema Postgres (tabelas + seeds)
-│   └── package.json        # Dependências do backend
-├── frontend/
-│   ├── script.js          # Lógica do cliente
-│   └── style.css          # Estilos da aplicação
-├── index.html             # Interface principal
-├── .gitignore            # Arquivos ignorados pelo Git
-└── README.md             # Documentação
-```
-
-## 🛠️ Tecnologias Utilizadas
-
-### Backend
-- **Node.js** com **Express.js**
-- **Postgres** (Neon) via **pg**
-- **node-fetch** para integração com API externa
-- **CORS** para permitir requisições cross-origin
-
-### Frontend
-- **HTML5** semântico
-- **CSS3** puro (sem frameworks)
-- **JavaScript** vanilla (ES6+)
-
-### API Externa
-- **apicarros.com** - Consulta gratuita de veículos por placa
-
-## 📊 Endpoints da API
-
-### Veículos
-- `GET /placa/:placa` - Consulta dados do veículo
-- `POST /entrada` - Registra entrada de veículo
-- `POST /saida` - Registra saída e calcula valor
-
-### Histórico
-- `GET /historico` - Lista histórico com filtros (dia, mes, ano)
-- `GET /historico/:placa` - Busca por placa específica
-- `GET /relatorio/resumo` - Estatísticas gerais
-
-### Configurações ⚙️
-- `GET /configuracoes` - Lista todas as configurações
-- `GET /configuracoes/:chave` - Obtém configuração específica
-- `PUT /configuracoes` - Atualiza múltiplas configurações
-
-## 💾 Banco de Dados
-
-### Tabela `historico`:
-- `id` - Identificador único
-- `placa` - Placa do veículo (normalizada para maiúsculas)
-- `marca` - Marca do veículo
-- `modelo` - Modelo do veículo
-- `cor` - Cor do veículo
-- `data_entrada` - Data de entrada (DATE)
-- `hora_entrada` - Hora de entrada (TIME)
-- `data_saida` - Data de saída (DATE)
-- `hora_saida` - Hora de saída (TIME)
-- `tempo_permanencia` - Tempo total no formato legível
-- `valor_pago` - Valor pago pelo cliente
-- `status` - "ativo" ou "saído"
-- `criado_em` - Timestamp de criação
-
-### Tabela `configuracoes`:
-- `id` - Identificador único
-- `chave` - Nome da configuração (única)
-- `valor` - Valor da configuração
-- `descricao` - Descrição da configuração
-- `atualizado_em` - Data/hora da última atualização
-
-**Configurações padrão:**
-- `valor_hora_inicial`: R$ 5,00 (primeira hora)
-- `valor_hora_adicional`: R$ 2,50 (hora adicional)
-- `tempo_tolerancia`: 15 minutos
-
-## 🎯 Regras de Negócio
-
-- **Tarifa**: R$ 5,00 primeira hora + R$ 2,50 por hora adicional
-- **Tempo Mínimo**: Primeira hora é cobrada integralmente
-- **Normalização**: Placas sempre salvas em MAIÚSCULAS
-- **Validação**: Aceita apenas formatos válidos de placa brasileira
-
-## 🔄 Atualização em Tempo Real
-
-O sistema atualiza automaticamente:
-- Listagem de veículos no pátio a cada 10 segundos
-- Cálculo do valor devido baseado no tempo de permanência
-- Status visual dos veículos no pátio
-
-## 📝 Licença
-
-Este projeto é de código aberto para fins educacionais.
-
-## 👤 Autor
-
-Desenvolvido para gerenciamento eficiente de estacionamentos.
-
-## 🚀 Deploy (Vercel + Neon)
-
-1) Crie um banco no Neon e copie a `DATABASE_URL`.
-2) Aplique o schema no Neon usando o arquivo `backend/schema.sql`.
-3) No projeto do backend no Vercel, configure as variáveis:
-	- `DATABASE_URL`
-	- `PGSSLMODE=require`
-	- (opcional) `ANPR_URL`, `ANPR_API_KEY`, `ANPR_FAKE_PLATE`
-4) Suba o repositório no Vercel. O frontend é estático e o backend é servido em `/api`.
-
-## 🐛 Problemas Conhecidos
-
-Se o banco de dados apresentar erros, confira a `DATABASE_URL` e o acesso ao Neon.
-
-## 🤝 Contribuindo
-
-Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou pull requests.
+- `backend/routes/plates.js`: rotas, upload e diagnóstico de serviços.
+- `backend/services/vehicle-lookup.js`: fornecedores, cache, cota e deduplicação.
+- `backend/services/vehicle-repository.js`: persistência do cadastro consultado.
+- `frontend/js/plate-camera.js`: sessão da câmera, enquadramento e confirmação.
+- `frontend/js/ocr.service.js`: OCR local e ciclo de vida do worker.
+- `frontend/js/plate.service.js`: comunicação com a API e escolha da leitura.
+- `backend/test/`: testes de lógica, HTTP e navegador.

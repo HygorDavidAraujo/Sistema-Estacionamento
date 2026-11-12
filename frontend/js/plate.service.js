@@ -1,112 +1,76 @@
 (function() {
-    const normalizePlaca = (p) => (p || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:';
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-    const defaultBase = window.BACKEND_BASE || (isLocal ? 'http://localhost:3000' : `${location.origin}/api`);
+    const normalizePlaca = value => String(value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const isValidPlaca = value => /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(normalizePlaca(value));
     let lastStatus = null;
+    let services = null;
+    let servicesAt = 0;
 
-    function setStatus(status) {
-        lastStatus = status || null;
+    function baseUrl() {
+        const local = ['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:';
+        return window.BACKEND_BASE || (local ? 'http://localhost:3000' : `${location.origin}/api`);
     }
-
-    function getLastStatus() {
-        return lastStatus;
-    }
-
-    function timeoutSignal(ms) {
-        if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-            return AbortSignal.timeout(ms);
-        }
-        if (typeof AbortController !== 'undefined') {
-            const controller = new AbortController();
-            setTimeout(() => controller.abort(), ms);
-            return controller.signal;
-        }
-        return undefined;
-    }
-
-    function withTimeout(promise, ms) {
-        return Promise.race([
-            promise,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
-        ]);
-    }
-
-    async function recognizePlateFromImage(imageBlob) {
-        if (!imageBlob) return null;
-        setStatus(null);
-        const baseUrl = window.BACKEND_BASE || defaultBase;
-        const endpoint = `${baseUrl}/placa/reconhecer`;
+    async function request(path, { signal, timeout = 15000, ...options } = {}) {
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        if (signal?.aborted) controller.abort();
+        signal?.addEventListener('abort', abort, { once: true });
+        const timer = setTimeout(abort, timeout);
         try {
-            const formData = new FormData();
-            formData.append('image', imageBlob, 'capture.jpg');
-            const res = await fetch(endpoint, { method: 'POST', body: formData, signal: timeoutSignal(6000) });
-            if (!res.ok) throw new Error('Reconhecimento indisponível');
-            const data = await res.json();
-            if (data?.placa) {
-                setStatus({ origem: data.origem || 'backend', mensagem: data.mensagem || '' });
-                return normalizePlaca(data.placa);
-            }
-            if (data?.mensagem) setStatus({ origem: data.origem || 'backend', mensagem: data.mensagem });
-        } catch (err) {
-            console.warn('[plate.service] Falha ao reconhecer placa via backend:', err.message);
-            setStatus({ origem: 'backend', mensagem: 'Falha no servidor de reconhecimento.' });
+            const headers = new Headers(options.headers || {});
+            const token = localStorage.getItem('adminToken');
+            if (token) headers.set('x-admin-token', token);
+            const response = await fetch(`${baseUrl()}${path}`, { ...options, headers, signal: controller.signal });
+            const data = await response.json().catch(() => null);
+            if (!response.ok) return { encontrado: false, status: data?.status || 'unavailable', mensagem: data?.mensagem || data?.error || 'Serviço indisponível. Preencha manualmente.' };
+            if (!data || typeof data !== 'object') return { encontrado: false, status: 'invalid_response', mensagem: 'Resposta inesperada do servidor.' };
+            return data;
+        } catch (error) {
+            if (signal?.aborted) throw new DOMException('Consulta cancelada.', 'AbortError');
+            return { encontrado: false, status: controller.signal.aborted ? 'timeout' : 'offline',
+                mensagem: controller.signal.aborted ? 'A consulta demorou. Você pode preencher os dados manualmente.' : 'Sem conexão com o servidor. Confira sua conexão.' };
+        } finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abort);
         }
+    }
+
+    async function getServices({ refresh = false } = {}) {
+        if (!refresh && services && Date.now() - servicesAt < 60000) return services;
+        const result = await request('/servicos/placas', { timeout: 5000 });
+        if (result.camera && result.consulta) { services = result; servicesAt = Date.now(); }
+        return result;
+    }
+
+    async function recognizePlateFromImage(image, options = {}) {
+        lastStatus = null;
+        let localError = null;
         try {
-            if (!isMobile && window.OcrService?.recognizePlateFromImage) {
-                const placa = await withTimeout(window.OcrService.recognizePlateFromImage(imageBlob), 10000).catch(() => null);
-                if (placa) return normalizePlaca(placa);
-            }
-        } catch (err) {
-            console.warn('[plate.service] OCR local falhou:', err.message);
+            const local = await window.OcrService.recognizePlateFromImage(options.localImage || image, options);
+            if (local) return local;
+        } catch (error) {
+            if (error.name === 'AbortError' || options.signal?.aborted) throw error;
+            localError = error.message;
+        }
+        if (options.signal?.aborted) throw new DOMException('Leitura cancelada.', 'AbortError');
+        if (options.cloudEnabled) {
+            options.onProgress?.('Tentando leitura na nuvem…');
+            const form = new FormData();
+            form.append('image', image, 'placa.jpg');
+            const result = await request('/placa/reconhecer', { method: 'POST', body: form, signal: options.signal, timeout: 15000 });
+            if (result.placa && isValidPlaca(result.placa)) return { ...result, placa: normalizePlaca(result.placa) };
+            lastStatus = result;
+            if (['quota_exceeded', 'credentials', 'not_configured', 'rate_limited'].includes(result.status)) lastStatus.stopCloud = true;
+        } else {
+            lastStatus = { status: 'not_found', mensagem: localError || 'Não consegui ler os sete caracteres. Aproxime a placa e tente capturar novamente.' };
         }
         return null;
     }
 
-    async function lookupPlateAPI(placa) {
-        const normalized = normalizePlaca(placa);
-        if (!normalized) return null;
-        const baseUrl = window.BACKEND_BASE || defaultBase;
-        console.log('[plate.service] Consultando placa:', normalized, 'baseUrl:', baseUrl);
-        try {
-            const endpoint = `${baseUrl}/placa/${normalized}?t=${Date.now()}`;
-            console.log('[plate.service] Endpoint:', endpoint);
-            const res = await fetch(endpoint, { 
-                method: 'GET', 
-                signal: timeoutSignal(5000),
-                cache: 'no-store',
-                headers: {
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache',
-                    'Expires': '0'
-                }
-            });
-            console.log('[plate.service] Status:', res.status);
-            if (!res.ok) {
-                console.warn('[plate.service] Resposta não OK:', res.status);
-                return null;
-            }
-            const data = await res.json();
-            console.log('[plate.service] Dados:', data);
-            if (data.error) return null;
-            return {
-                encontrado: data.encontrado !== false,
-                marca: data.marca || '',
-                modelo: data.modelo || '',
-                cor: data.cor || '',
-                mensagem: data.mensagem || '',
-                origem: data.origem || 'api'
-            };
-        } catch (err) {
-            console.warn('[plate.service] Erro ao consultar placa:', err.message);
-            return null;
-        }
+    async function lookupPlateAPI(value, options = {}) {
+        const plate = normalizePlaca(value);
+        if (!isValidPlaca(plate)) return { encontrado: false, status: 'invalid_plate', mensagem: 'Use uma placa no formato ABC1234 ou ABC1D23.' };
+        return request(`/placa/${plate}`, { signal: options.signal });
     }
 
-    window.PlateService = {
-        normalizePlaca,
-        recognizePlateFromImage,
-        lookupPlateAPI,
-        getLastStatus
-    };
+    window.PlateService = { normalizePlaca, isValidPlaca, lookupPlateAPI, recognizePlateFromImage, getServices, getLastStatus: () => lastStatus };
 })();

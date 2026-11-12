@@ -13,6 +13,10 @@ if (!connectionString) {
 
 const pool = new Pool({
     connectionString,
+    max: 5,
+    connectionTimeoutMillis: 3000,
+    idleTimeoutMillis: 10000,
+    query_timeout: 5000,
     ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined
 });
 

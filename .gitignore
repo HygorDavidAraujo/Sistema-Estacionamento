@@ -26,3 +26,8 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Test artifacts
+backend/test-results/
+backend/playwright-report/
+artifacts/

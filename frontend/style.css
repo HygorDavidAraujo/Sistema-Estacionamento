@@ -595,3 +595,96 @@ select:focus-visible {
 }
 
 .inline-actions .btn-primary { width: auto; }
+
+/* Central de operação */
+:root { --ink:#173447; --muted:#607481; --brand:#116a68; --surface:#fff; --line:#dce6e9; }
+[hidden] { display:none !important; }
+#fecharCameraEntradaBtn[aria-hidden="true"] { display:none; }
+body { font-family:"Segoe UI",system-ui,sans-serif; background:#f2f6f6; color:var(--ink); line-height:1.5; }
+header { background:#123a52; padding:22px 28px; box-shadow:0 3px 14px #16344712; }
+.brand { display:flex; align-items:center; gap:14px; }
+.brand-symbol { display:grid; place-items:center; width:48px; height:48px; background:#d4eee7; color:#123a52; border-radius:14px; font-weight:800; font-size:30px; }
+.eyebrow { display:block; font-size:10px; font-weight:700; letter-spacing:1.8px; color:var(--muted); }
+.brand .eyebrow { color:#b1ced9; }
+h1 { font-size:23px; margin:0; font-weight:650; letter-spacing:-.5px; }
+h2 { font-size:21px; letter-spacing:-.4px; }
+.header-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.header-actions button { margin:0; font-size:13px; background:#ffffff13; border:1px solid #ffffff25; }
+.header-actions #btnEntrada { background:#d4eee7; color:#123a52; border-color:transparent; font-weight:700; }
+button,.photo-button { min-height:40px; padding:10px 15px; font:600 13px "Segoe UI",system-ui,sans-serif; border-radius:9px; background:var(--brand); transition:background .15s,box-shadow .15s; }
+button:hover { opacity:1; box-shadow:0 3px 10px #17344715; }
+.btn-ghost { color:var(--ink); background:#edf3f4; margin-bottom:0; }
+.main-container { max-width:1500px; padding:28px; gap:26px; }
+.section-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.section-heading h2 { margin:3px 0 0; }
+.connection-status { font-size:11px; color:#607481; border:1px solid var(--line); background:white; padding:5px 10px; border-radius:20px; white-space:nowrap; }
+.connection-status[data-state="online"] { color:#166c4e; background:#e7f5ed; border-color:#c9e5d6; }
+.connection-status[data-state="offline"] { color:#965e1c; background:#fff4df; }
+.dashboard-cards { gap:14px; grid-template-columns:repeat(4,minmax(0,1fr)); margin-top:22px; }
+.dashboard-card { padding:22px 18px; background:white !important; border:1px solid var(--line); border-radius:14px; text-align:left; box-shadow:0 3px 12px #17344704; }
+.dashboard-card h3 { font-size:12px; color:var(--muted); margin-bottom:12px; }
+.dashboard-card p { font-size:34px; font-weight:650; line-height:1.2; }
+.dashboard-card.total p { color:#173447; }
+.dashboard-card.ocupadas p { color:#b16a25; }
+.dashboard-card.disponiveis p { color:#137b60; }
+.dashboard-card.percentual p { color:#416d8b; }
+#patio { margin-top:30px; }
+#patioCarList { display:grid; grid-template-columns:repeat(auto-fill,minmax(255px,1fr)); gap:16px; }
+.car-item { border:1px solid var(--line); border-top:3px solid #75b6a8; border-radius:12px; background:white; padding:18px; margin:0; }
+.car-item p { margin:6px 0; font-size:13px; }
+.car-item p:first-child { font-size:17px; letter-spacing:1px; margin-bottom:12px; }
+.car-item b { font-weight:600; }
+.car-item .card-actions { margin-top:16px; }
+#caixaSidebar { background:#123a52; border:1px solid var(--line); border-radius:16px; box-shadow:0 3px 12px #17344704; }
+#caixaSidebar .btn-relatorios { color:#173447; }
+#caixaSidebar .caixa-actions { display:flex; flex-direction:column; gap:9px; }
+.popup { background:#102f436e; backdrop-filter:blur(4px); }
+.popup-content { border-radius:18px; padding:26px; max-width:540px; box-shadow:0 20px 80px #102f4326; }
+.popup-content-large { max-width:1000px; }
+.popup-content h3 { margin-top:0; font-size:22px; letter-spacing:-.4px; padding-right:25px; }
+.close { color:#576d7a; font-size:27px; padding:0 8px; }
+label { font-weight:600; color:var(--ink); font-size:12px; margin-top:14px; }
+input[type="text"],input[type="number"],select { padding:11px 12px; border:1px solid #d3dfe4; border-radius:9px; color:var(--ink); background:#fcfefe; font-size:14px; }
+.plate-input { font-family:Consolas,monospace; font-weight:700; font-size:24px !important; letter-spacing:3px; text-transform:uppercase; }
+.lookup-status { padding:10px 12px; background:#eef4f6; color:#496475; border-radius:9px; font-size:12px; margin:9px 0 15px; }
+.lookup-status[data-state="success"] { background:#e7f5ed; color:#176443; }
+.lookup-status[data-state="warning"] { background:#fff4df; color:#83551f; }
+.lookup-status[data-state="loading"] { border-left:3px solid #228b7c; }
+.photo-button { margin:0; cursor:pointer; color:var(--ink); background:#edf3f4; display:inline-flex; align-items:center; }
+.photo-button:focus-within { outline:3px solid #6baeb5; }
+.camera-container { padding:14px; border-radius:13px; background:#102e40; }
+.camera-viewport { position:relative; width:100%; aspect-ratio:16/10; overflow:hidden; border-radius:9px; background:#071d2a; }
+.camera-container .camera-viewport video { position:absolute; inset:0; width:100%; height:100%; max-height:none; object-fit:cover; border:0; border-radius:0; }
+.plate-guide { position:absolute; width:82%; height:27%; left:9%; top:36.5%; border:2px solid #8de4bc; border-radius:6px; box-shadow:0 0 0 500px #061b284a; pointer-events:none; }
+.plate-guide.motorcycle { width:48%; height:51%; left:26%; top:24.5%; }
+.camera-guide-label { position:absolute; bottom:10px; left:0; right:0; text-align:center; color:white; font-size:11px; text-shadow:0 1px 4px black; }
+.camera-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.camera-controls label { flex:1; min-width:120px; color:#d5e5ec; font-weight:400; margin:0; font-size:11px; }
+.camera-controls .checkbox-item { flex-basis:100%; }
+.checkbox-item input[type="checkbox"] { flex:none; width:16px; height:16px; min-width:16px; margin:0; accent-color:var(--brand); }
+.tipo-cliente .checkbox-item { margin-top:0; gap:8px; }
+.camera-controls input[type="range"] { width:100%; accent-color:#8de4bc; }
+.camera-controls select { padding:6px; font-size:12px; }
+.camera-status { font-size:12px; line-height:1.5; }
+.camera-actions { align-items:flex-start; }
+.camera-actions button { flex-shrink:0; }
+.plate-review { padding:15px; background:white; border-radius:10px; margin-top:8px; }
+.plate-review img { display:block; max-width:100%; max-height:150px; margin:0 auto 12px; border-radius:5px; }
+.plate-review p { font-size:11px; color:var(--muted); }
+.photo-mode .camera-viewport,.photo-mode .camera-controls,.photo-mode .camera-actions button { display:none; }
+#registrarBtn { width:100%; margin-top:20px; }
+@media(max-width:760px) {
+    header { padding:18px; gap:18px; }
+    .main-container { padding:18px; }
+    .header-actions { width:100%; }
+    .header-actions button { flex:1 1 28%; font-size:12px; padding:9px; }
+    .dashboard-cards { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .section-heading { align-items:flex-start; }
+    .section-heading h2 { font-size:19px; }
+    .connection-status { max-width:120px; white-space:normal; text-align:center; }
+    .popup-content { padding:22px; }
+    .popup { padding:10px; }
+    .camera-actions { flex-direction:column; }
+    .camera-actions button { width:100%; }
+}
+@media(prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none !important; animation:none !important; } }

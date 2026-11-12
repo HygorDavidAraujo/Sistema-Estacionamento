@@ -28,6 +28,17 @@ CREATE INDEX IF NOT EXISTS idx_historico_status ON historico(status);
 CREATE INDEX IF NOT EXISTS idx_historico_data_saida ON historico(data_saida);
 CREATE INDEX IF NOT EXISTS idx_historico_forma_pagamento ON historico(forma_pagamento);
 
+-- Cadastro compartilhado: a consulta é salva mesmo sem registrar uma entrada.
+CREATE TABLE IF NOT EXISTS veiculos_cache (
+    placa VARCHAR(7) PRIMARY KEY,
+    marca VARCHAR(120) NOT NULL DEFAULT '',
+    modelo VARCHAR(120) NOT NULL DEFAULT '',
+    cor VARCHAR(60) NOT NULL DEFAULT '',
+    origem VARCHAR(40) NOT NULL,
+    expira_em TIMESTAMPTZ NOT NULL,
+    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS configuracoes (
     id BIGSERIAL PRIMARY KEY,
     chave VARCHAR(120) UNIQUE NOT NULL,
