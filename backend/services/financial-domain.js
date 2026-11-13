@@ -68,6 +68,11 @@ export function dailyDeadline(value, now, timeZone = 'America/Sao_Paulo') {
 export function hourlyAmount(minutes, settings, tolerance = settings.tolerancia) {
     return minutes <= tolerance ? 0 : settings.inicial + Math.ceil(Math.max(0, minutes - 60) / 60) * settings.adicional;
 }
+export function monthlyCoverageEnd(date,timeZone){
+    if(!civilDate(date))return null;
+    const next=new Date(`${date}T00:00:00Z`);next.setUTCDate(next.getUTCDate()+1);
+    return dailyDeadline(`${next.toISOString().slice(0,10)}T00:00`,new Date(0),timeZone);
+}
 export function price(entry, settings, now, monthlyEligible = false) {
     const start = new Date(entry.criado_em);
     if (!Number.isFinite(start.getTime())) fail('Horário de entrada inválido', 409);
@@ -75,6 +80,12 @@ export function price(entry, settings, now, monthlyEligible = false) {
     const minutes = Math.ceil(ms / 60000);
     let amount; let daily = {};
     if (entry.mensalista && monthlyEligible) amount = 0;
+    else if(entry.mensalista&&entry.mensalista_cobertura_ate){
+        const covered=new Date(entry.mensalista_cobertura_ate);
+        const lateMinutes=Math.ceil(Math.max(0,now-covered)/60000);
+        amount=hourlyAmount(lateMinutes,settings,0);
+        daily={mensalista_cobertura_ate:covered.toISOString(),atraso_minutos:lateMinutes};
+    }
     else if (entry.diarista && entry.diaria_retirada_em && entry.diaria_valor_pago != null) {
         const deadline = new Date(entry.diaria_retirada_em);
         if (!Number.isFinite(deadline.getTime())) fail('Horário de retirada da diária inválido', 409);

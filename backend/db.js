@@ -41,7 +41,7 @@ export const initDb = createDatabaseInitializer({
         'schema.sql',
         'migrations/001-security.sql',
         'migrations/002-cash-shifts.sql',
-        'migrations/003-prepaid-daily.sql'
+        'migrations/003-prepaid-daily.sql','migrations/004-subscriptions-reports.sql'
     ].map(file => fs.readFile(resolve(__dirname, file), 'utf8')))).join('\n'),
     onApplied: () => console.log('[BACK] Schema aplicado com sucesso')
 });

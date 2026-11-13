@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import {readFile} from 'node:fs/promises';
 
 test.afterEach(async ({ page }, testInfo) => {
     if (testInfo.status !== testInfo.expectedStatus) {
@@ -199,7 +200,8 @@ test('entrada, saída e mensalidade geram comprovantes compactos de 58 e 80 mm',
 });
 
 test('histórico exibe observação maliciosa como texto, sem executar eventos',async({page})=>{
-    await page.route('**/mensalistas/99/pagamentos?limit=100',route=>route.fulfill({json:{success:true,dados:[{id:1,valor_pago:300,observacao:'<img src=x onerror="window.__xss=1">',forma_pagamento:'<b>Pix</b>'}]}}));
+    await page.route('**/mensalistas/99/financeiro',route=>route.fulfill({json:{success:true,dados:{contrato:{id:99,plano:'Plano teste',valor_mensal:300,limite_simultaneo:1,situacao:'sem_pagamento'},cobrancas:[],veiculos:['ABC1D23']}}}));
+    await page.route('**/mensalistas/99/pagamentos?*',route=>route.fulfill({json:{success:true,dados:[{id:1,valor_pago:300,observacao:'<img src=x onerror="window.__xss=1">',forma_pagamento:'<b>Pix</b>'}]}}));
     await page.evaluate(()=>carregarHistoricoMensalidade({id:99,nome:'<script>teste</script>',placa:'ABC1D23'}));
     expect(await page.locator('#mensalidadeHistoricoConteudo img').count()).toBe(0);
     expect(await page.evaluate(()=>window.__xss)).toBeUndefined();
@@ -340,5 +342,50 @@ test('diária paga na entrada, horário combinado e cobrança somente do atraso,
         await expect(page.locator('#comprovantePermanencia')).toContainText('PAGO NA SAÍDA');await expect(page.locator('#comprovantePermanencia')).toContainText('7,50');await expect(page.locator('#comprovantePermanencia')).toContainText('32,50');
         for(const width of ['80','58'])await print('comprovantePermanencia','saida',width);
         await expect(card).toHaveCount(0);
+    }finally{await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:0});});}
+});
+
+test('mensalista pela interface: contrato, parcial, quitação de 30 dias, avisos, relatório e exportação',async({page})=>{
+    const plate='STU4V56';
+    await page.click('#btnMensalistas');await page.click('#btnNovoMensalista');await page.fill('#mensalistaPlaca',plate);await page.fill('#mensalistaNomeForm','Cliente do plano de 30 dias');await page.fill('#mensalistaPlano','Plano família');await page.fill('#mensalistaValorContrato','275');await page.fill('#mensalistaVeiculos','VWX5Y67');await page.fill('#mensalistaLimite','1');await page.click('#btnSalvarMensalista');
+    await page.fill('#mensalistasBusca',plate);await page.click('#btnBuscarMensalistas');await expect(page.locator('#mensalistasLista')).toContainText('Sem pagamento');
+    await page.locator('#mensalistasLista [data-pay-id]').click();await expect(page.locator('#mensalidadeValor')).toHaveValue('275.00');await page.fill('#mensalidadeReceber','100');await page.selectOption('#splitMensalidadeLista .split-forma','Pix');await page.click('#confirmarMensalidadeBtn');
+    await expect(page.locator('#comprovanteMensalidadePopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteMensalidade')).toContainText('PAGAMENTO PARCIAL');await expect(page.locator('#comprovanteMensalidade')).toContainText('175,00');
+    await page.evaluate(()=>{const open=window.open.bind(window);window.open=(...args)=>{const child=open(...args);if(child)child.print=()=>{child.__printed=true;};return child;};});
+    for(const width of ['80','58']){
+        await page.selectOption('#printMensalidadeWidth',width);const wait=page.waitForEvent('popup');await page.click('[data-receipt-print="comprovanteMensalidade"]');const popup=await wait;await popup.waitForFunction(()=>window.__printed);
+        const overflow=await popup.evaluate(()=>{const r=document.querySelector('.receipt');return r.scrollWidth>Math.ceil(r.getBoundingClientRect().width);});expect(overflow).toBe(false);
+        await popup.evaluate(()=>{window.onafterprint=null;});const pdf=await popup.pdf({path:`../artifacts/mensalidade-parcial-${width}mm.pdf`,preferCSSPageSize:true});expect((pdf.toString('latin1').match(/\/Type \/Page\b/g)||[]).length).toBe(1);await popup.screenshot({path:`../artifacts/mensalidade-parcial-${width}mm.png`,fullPage:true});await popup.close();
+    }
+    await page.locator('#comprovanteMensalidadePopup [data-close]').click();await page.fill('#mensalistasBusca',plate);await page.click('#btnBuscarMensalistas');await page.locator('#mensalistasLista [data-pay-id]').click();await expect(page.locator('#mensalidadeReceber')).toHaveValue('175.00');await page.selectOption('#splitMensalidadeLista .split-forma','Dinheiro');await page.click('#confirmarMensalidadeBtn');
+    await expect(page.locator('#comprovanteMensalidade')).toContainText('30 dias');await expect(page.locator('#comprovanteMensalidade')).toContainText('Pago até');await expect(page.locator('#comprovanteMensalidade')).not.toContainText('PAGAMENTO PARCIAL');await page.locator('#comprovanteMensalidadePopup [data-close]').click();
+    await page.locator('#mensalistasLista [data-history-id]').click();await expect(page.locator('#mensalidadeHistoricoConteudo')).toContainText('Recebimentos');await expect(page.locator('#mensalidadeHistoricoConteudo [data-operation-receipt]')).toHaveCount(2);await page.locator('#mensalistasPopup [data-close]').first().click();
+    await page.evaluate(async plate=>{await operationRequest('/entrada',{placa:plate,mensalista:true});await syncActiveEntriesFromBackend();updatePatioCarList();},plate);
+    for(const [days,label]of [[28,'Vence em até 2 dias'],[30,'Vence hoje'],[31,'Vencido']]){
+        await page.evaluate(async days=>{await operationRequest('/__test/clock',{advanceMinutes:days*24*60});await SubscriptionService.alerts();},days);await expect(page.locator('#mensalistasAvisos')).toContainText(label);
+    }
+    await page.locator('.car-item').filter({hasText:plate}).locator('.btn-saida-card').click();await expect(page.locator('#mensalistaVencidoPopup')).toHaveAttribute('aria-hidden','false');await page.click('#saidaSemRenovar');
+    await expect(page.locator('#pagamentoPopup')).toHaveAttribute('aria-hidden','false');expect(await page.locator('#splitPagamentoLista .split-valor').inputValue()).not.toBe('0.00');await page.selectOption('#splitPagamentoLista .split-forma','Pix');await page.click('#confirmarPagamentoBtn');await expect(page.locator('#comprovantePermanencia')).toContainText('Cliente optou por não renovar');await page.locator('#comprovantePermanenciaPopup [data-close]').click();
+    await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:0});await SubscriptionService.alerts();});
+    await page.click('#btnRelatoriosCaixa');await page.selectOption('#relatorioOrigem','mensalidade');await page.fill('#relatorioPlaca',plate);await page.click('#btnGerarRelatorioCaixa');await expect(page.locator('#relatorioCaixaConteudo')).toContainText('275,00');await expect(page.locator('#relatorioCaixaConteudo')).toContainText('2 / 2');await expect(page.locator('#relatorioCaixaConteudo [data-operation-receipt]')).toHaveCount(2);
+    const downloadWait=page.waitForEvent('download');await page.click('#btnExportarFinanceiro');const download=await downloadWait;const exported=await readFile(await download.path(),'utf8');expect(exported).toContain(plate);expect(exported).toContain('275');expect(exported).not.toContain('JKL1M23');
+    const printWait=page.waitForEvent('popup');await page.click('#btnImprimirRelatorio');const popup=await printWait;await popup.waitForFunction(()=>window.__printed);await expect(popup.locator('body')).toContainText('275,00');await popup.pdf({path:'../artifacts/relatorio-recebimentos.pdf',preferCSSPageSize:true});await popup.screenshot({path:'../artifacts/relatorio-recebimentos.png',fullPage:true});await popup.close();
+    await page.locator('#relatoriosCaixaPopup [data-close]').click();await page.click('#btnHistorico');await page.fill('#filtroAcao','mensalista_contrato_criado');await page.click('#btnVerAuditoria');await expect(page.locator('#historicoConteudo')).toContainText('Operador de teste');await expect(page.locator('#historicoConteudo')).toContainText('mensalista_contrato_criado');
+});
+
+test('mensalista vencido renova pela tela de saída e preserva o período já quitado',async({page})=>{
+    const plate='XYZ6A78';
+    await page.evaluate(async plate=>{
+        const row=(await operationRequest('/mensalistas',{placa:plate,nome:'Cliente renova na saída',valor_mensal:300})).dados;
+        const q=(await operationRequest(`/mensalistas/${row.id}/cotacao`,{meses:1})).dados;
+        const shift=(await(await apiFetch(`${BACKEND_BASE}/caixa/turnos/atual`)).json()).dados.id;
+        await operationRequest('/mensalistas/pagamentos',{mensalista_id:row.id,meses:1,revisao:q.revisao,cobranca_id:q.cobranca_id,periodo_previsto:q.fim_periodo,turno_id:shift,operacao_id:crypto.randomUUID(),pagamentos:[{forma_pagamento:'Pix',valor_pago:300}]});
+        await operationRequest('/entrada',{placa:plate,mensalista:true});await syncActiveEntriesFromBackend();updatePatioCarList();await operationRequest('/__test/clock',{advanceMinutes:31*24*60});
+    },plate);
+    try{
+        await page.locator('.car-item').filter({hasText:plate}).locator('.btn-saida-card').click();await expect(page.locator('#mensalistaVencidoPopup')).toHaveAttribute('aria-hidden','false');await page.click('#renovarAntesSaida');
+        await expect(page.locator('#mensalidadePagamentoPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#mensalidadeReceber')).toHaveValue('300.00');await page.selectOption('#splitMensalidadeLista .split-forma','Dinheiro');await page.click('#confirmarMensalidadeBtn');
+        await expect(page.locator('#comprovanteMensalidadePopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#continuarSaidaMensalista')).toBeVisible();await page.click('#continuarSaidaMensalista');
+        await expect(page.locator('#comprovantePermanenciaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovantePermanencia')).toContainText('Sem cobrança');await expect(page.locator('.car-item').filter({hasText:plate})).toHaveCount(0);
     }finally{await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:0});});}
 });

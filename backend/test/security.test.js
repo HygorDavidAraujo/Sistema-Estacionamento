@@ -69,13 +69,15 @@ test('acesso, permissões, cobranças, transações e restore com PostgreSQL iso
         assert.equal((await operator.request('/saida','POST',{...payment,pagamentos:[{forma_pagamento:'Pix',valor_pago:7.5}]})).status,409);
         const original=await operator.request(`/comprovantes/entrada/${ticket}`); assert.equal(original.data.dados.tarifa.inicial,500);
     });
-    await t.test('mensalidade usa preço do servidor, preserva vencimento futuro e evita duplicidade',async()=>{
+    await t.test('mensalidade usa preço do servidor, acrescenta 30 dias à validade quitada e evita duplicidade',async()=>{
         await system.db.query("INSERT INTO mensalistas (placa,nome,vencimento) VALUES ('DEF4G56','Cliente','2099-01-31')");
         const id=(await system.db.query("SELECT id FROM mensalistas WHERE placa='DEF4G56'")).rows[0].id;
-        const invalid=await operator.request('/mensalistas/pagamentos','POST',{turno_id:turno,mensalista_id:id,meses:12,operacao_id:randomUUID(),pagamentos:[{forma_pagamento:'Pix',valor_pago:0.01}]}); assert.equal(invalid.status,409);
-        const body={turno_id:turno,mensalista_id:id,meses:1,operacao_id:randomUUID(),pagamentos:[{forma_pagamento:'Pix',valor_pago:300}]};
+        const quote12=(await operator.request('/mensalistas/'+id+'/cotacao','POST',{meses:12})).data.dados;
+        const quote1=(await operator.request('/mensalistas/'+id+'/cotacao','POST',{meses:1})).data.dados;
+        const invalid=await operator.request('/mensalistas/pagamentos','POST',{turno_id:turno,mensalista_id:id,meses:12,revisao:quote12.revisao,periodo_previsto:quote12.fim_periodo,operacao_id:randomUUID(),pagamentos:[{forma_pagamento:'Pix',valor_pago:0.01}]}); assert.equal(invalid.status,409);
+        const body={turno_id:turno,mensalista_id:id,meses:1,revisao:quote1.revisao,periodo_previsto:quote1.fim_periodo,operacao_id:randomUUID(),pagamentos:[{forma_pagamento:'Pix',valor_pago:300}]};
         const a=await operator.request('/mensalistas/pagamentos','POST',body), b=await operator.request('/mensalistas/pagamentos','POST',body);
-        assert.equal(a.status,200); assert.equal(a.data.novo_vencimento,'2099-02-28'); assert.deepEqual(a.data,b.data);
+        assert.equal(a.status,200); assert.equal(a.data.novo_vencimento,'2099-03-02'); assert.deepEqual(a.data,b.data);
         assert.equal(a.data.comprovante.meses,1);
     });
     await t.test('backup completo; restore vazio/inválido ou sem senha não altera dados; recuperação preserva sequências',async()=>{

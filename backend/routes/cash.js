@@ -2,6 +2,7 @@ import express from 'express';
 import { createHash } from 'node:crypto';
 import { audit, fail, cents, operationKey } from '../services/financial-domain.js';
 import { lockShift, ownShift, visibleShift, isCashManager, reason, shiftSummary, dateRange } from '../services/cash-domain.js';
+import {paging,pageInfo} from '../services/query-domain.js';
 
 export function createCashRouter({query,tx,allow,timeZone='America/Sao_Paulo',clock=()=>new Date()}){
     const router=express.Router();
@@ -133,19 +134,24 @@ export function createCashRouter({query,tx,allow,timeZone='America/Sao_Paulo',cl
         }));
     }));
     router.get('/caixa/turnos',handle(async(req,res)=>{
-        const range=dateRange(req.query);const params=[];let where=' WHERE 1=1';
+        const range=dateRange(req.query),p=paging(req.query);const params=[];let where=' WHERE 1=1';
         if(!isCashManager(req.user)&&req.user.perfil!=='financeiro'){params.push(req.user.id);where+=` AND operador_id=$${params.length}`;}
         if(range.dataInicio){params.push(range.dataInicio);where+=` AND data_ref >= $${params.length}`;}if(range.dataFim){params.push(range.dataFim);where+=` AND data_ref <= $${params.length}`;}
-        const rows=(await query(`SELECT *,TO_CHAR(data_ref,'YYYY-MM-DD') AS data_iso FROM caixa_turnos${where} ORDER BY id DESC LIMIT 200`,params)).rows;
-        res.json({success:true,dados:rows});
+        const total=(await query(`SELECT COUNT(*)::int AS n FROM caixa_turnos${where}`,params)).rows[0].n;
+        const rows=(await query(`SELECT *,TO_CHAR(data_ref,'YYYY-MM-DD') AS data_iso FROM caixa_turnos${where} ORDER BY id DESC LIMIT $${params.length+1} OFFSET $${params.length+2}`,[...params,p.size,p.offset])).rows;
+        res.json({success:true,dados:rows,paginacao:pageInfo(p,total)});
     }));
     router.get('/caixa/fechamentos',handle(async(req,res)=>{
-        const range=dateRange(req.query);const params=[];let where=' WHERE 1=1';
+        const range=dateRange(req.query),p=paging(req.query),lp=paging({...req.query,pagina:req.query.paginaLegados||1});const params=[];let where=' WHERE 1=1';
         if(!isCashManager(req.user)&&req.user.perfil!=='financeiro'){params.push(req.user.id);where+=` AND t.operador_id=$${params.length}`;}
         if(range.dataInicio){params.push(range.dataInicio);where+=` AND t.data_ref >= $${params.length}`;}if(range.dataFim){params.push(range.dataFim);where+=` AND t.data_ref <= $${params.length}`;}
-        const rows=(await query(`SELECT c.*,t.operador_nome,t.estado AS turno_estado,TO_CHAR(t.data_ref,'YYYY-MM-DD') AS data_ref FROM caixa_conferencias c JOIN caixa_turnos t ON t.id=c.turno_id${where} ORDER BY c.id DESC LIMIT 200`,params)).rows;
-        const legacy=isCashManager(req.user)||req.user.perfil==='financeiro'?(await query("SELECT *,TO_CHAR(data_ref,'YYYY-MM-DD') AS data_iso FROM caixa_fechamentos WHERE ($1::date IS NULL OR data_ref >= $1) AND ($2::date IS NULL OR data_ref <= $2) ORDER BY data_ref DESC LIMIT 100",[range.dataInicio||null,range.dataFim||null])).rows:[];
-        res.json({success:true,dados:rows,legados:legacy});
+        const from='FROM caixa_conferencias c JOIN caixa_turnos t ON t.id=c.turno_id';
+        const total=(await query(`SELECT COUNT(*)::int AS n ${from}${where}`,params)).rows[0].n;
+        const rows=(await query(`SELECT c.*,t.operador_nome,t.estado AS turno_estado,TO_CHAR(t.data_ref,'YYYY-MM-DD') AS data_ref ${from}${where} ORDER BY c.id DESC LIMIT $${params.length+1} OFFSET $${params.length+2}`,[...params,p.size,p.offset])).rows;
+        const canLegacy=isCashManager(req.user)||req.user.perfil==='financeiro',legacyFrom="FROM caixa_fechamentos WHERE ($1::date IS NULL OR data_ref >= $1) AND ($2::date IS NULL OR data_ref <= $2)",dates=[range.dataInicio||null,range.dataFim||null];
+        const legacyCount=canLegacy?(await query(`SELECT COUNT(*)::int AS n ${legacyFrom}`,dates)).rows[0].n:0;
+        const legacy=canLegacy?(await query(`SELECT *,TO_CHAR(data_ref,'YYYY-MM-DD') AS data_iso ${legacyFrom} ORDER BY data_ref DESC LIMIT $3 OFFSET $4`,[...dates,lp.size,lp.offset])).rows:[];
+        res.json({success:true,dados:rows,legados:legacy,paginacao:pageInfo(p,total),paginacao_legados:pageInfo(lp,legacyCount)});
     }));
     router.get('/caixa/consolidado',allow('supervisor','financeiro','administrador'),handle(async(req,res)=>{
         const range=dateRange(req.query);const start=range.dataInicio||date(clock()),end=range.dataFim||start;

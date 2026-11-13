@@ -58,14 +58,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     bindUI();
     ReceiptService.bind();
     CashService.bind();
+    ReportService.bind();SubscriptionService.bind();
     window.onSessionStarted = async () => {
         await loadConfig();
         await syncActiveEntriesFromBackend();
         await carregarDashboard();
-        await CashService.refresh();
+        await CashService.refresh();await SubscriptionService.alerts();SubscriptionService.clearForm();
         updatePatioCarList();
     };
-    window.onSessionEnded = () => { CashService.clear(); window.mensalistaEditId = null; restoreCandidate = null; clearEntradaForm(); };
+    window.onSessionEnded = () => { CashService.clear(); SubscriptionService.clear();ReportService.clear(); window.mensalistaEditId = null; restoreCandidate = null; clearEntradaForm(); };
     if (await AuthService.initialize()) await window.onSessionStarted();
     // atualiza tempos no pátio, dashboard vagas e caixa a cada 10s
     let refreshing = false;
@@ -75,7 +76,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             await syncActiveEntriesFromBackend();
             updatePatioCarList();
-            await Promise.allSettled([carregarDashboard(), CashService.refresh()]);
+            await Promise.allSettled([carregarDashboard(), CashService.refresh(), SubscriptionService.alerts()]);
         } finally { refreshing = false; }
     }, 10000);
 });
@@ -349,13 +350,7 @@ async function preencherMensalistaPorPlaca(placa) {
         document.getElementById('mensalistaNome').value = mensalista.nome || '';
         document.getElementById('mensalistaTelefone').value = mensalista.telefone || '';
         document.getElementById('mensalistaCpf').value = mensalista.cpf || '';
-        if (mensalista.vencimento) {
-            const venc = new Date(mensalista.vencimento);
-            const hoje = new Date();
-            if (venc < new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())) {
-                alert('Mensalidade vencida. Verifique o cadastro do mensalista.');
-            }
-        }
+        if(['vencido','vence_hoje','a_vencer','sem_pagamento','suspenso','cancelado'].includes(mensalista.situacao))notify(`Mensalista: ${({vencido:'mensalidade vencida',vence_hoje:'vence hoje',a_vencer:'vence em até 2 dias',sem_pagamento:'sem quitação',suspenso:'contrato suspenso',cancelado:'contrato cancelado'})[mensalista.situacao]}. ${mensalista.vencimento?'Pago até '+mensalista.vencimento:''}`,'info',7000);
     } catch (err) {
         // sem mensalista cadastrado
     }
@@ -517,7 +512,7 @@ function bindUI() {
     document.getElementById('btnSaida').onclick = () => openPopup('saidaPopup');
     document.getElementById('btnHistorico').onclick = () => {
         openPopup('historicoPopup');
-        carregarRelatorioResumo();
+        if(AuthService.user?.perfil==='operador')carregarHistoricoCompleto();else carregarRelatorioResumo();
     };
     document.getElementById('btnMenu').onclick = () => toggleMenu(true);
     document.getElementById('btnMensalistas').onclick = () => {
@@ -559,6 +554,12 @@ function bindUI() {
     document.getElementById('btnGerarRelatorioCaixa')?.addEventListener('click', gerarRelatorioCaixa);
     document.getElementById('confirmarPagamentoBtn')?.addEventListener('click', confirmarPagamento);
     document.getElementById('confirmarMensalidadeBtn')?.addEventListener('click', confirmarPagamentoMensalidade);
+    document.getElementById('renovarAntesSaida').addEventListener('click',()=>{
+        const pending=window.saidaMensalistaPendente;if(!pending?.dados.mensalista_id)return;
+        closePopup('mensalistaVencidoPopup');SubscriptionService.openPayment({id:pending.dados.mensalista_id,nome:pending.dados.nome,placa:pending.entry.placa});
+    });
+    document.getElementById('saidaSemRenovar').addEventListener('click',()=>{const pending=window.saidaMensalistaPendente;if(!pending)return;window.saidaMensalistaPendente=null;closePopup('mensalistaVencidoPopup');prepararPagamento(pending.entry,{continuarAvulso:true});});
+    document.getElementById('continuarSaidaMensalista').addEventListener('click',()=>{const pending=window.saidaMensalistaPendente;if(!pending)return;window.saidaMensalistaPendente=null;document.getElementById('continuarSaidaMensalista').hidden=true;closePopup('comprovanteMensalidadePopup');prepararPagamento(pending.entry);});
     document.getElementById('confirmarFechamentoBtn')?.addEventListener('click', confirmarFechamentoCaixa);
     document.getElementById('cancelarFechamentoBtn')?.addEventListener('click', () => closePopup('fechamentoCaixaPopup'));
     document.getElementById('btnBuscarFechamentos')?.addEventListener('click', carregarHistoricoFechamentos);
@@ -1002,11 +1003,15 @@ async function processarEntradaDiaria(pagamentos){
     finally{entradaBusy=false;document.getElementById('confirmarPagamentoBtn').disabled=false;}
 }
 
-async function prepararPagamento(entry) {
+async function prepararPagamento(entry,{continuarAvulso=false}={}) {
     if (!entry) return notify('Entrada não localizada.','error');
     try {
         const shift = await CashService.requireOwnShift();
-        const { dados } = await operationRequest('/saida/cotacao',{ entryId:entry.entryId,placa:entry.placa });
+        const { dados } = await operationRequest('/saida/cotacao',{ entryId:entry.entryId,placa:entry.placa,continuar_avulso:continuarAvulso });
+        if(dados.mensalista_vencido&&!dados.cotacao_id){
+            window.saidaMensalistaPendente={entry,dados};window.dadosPagamento=null;document.getElementById('mensalistaVencidoResumo').textContent=`${dados.nome||entry.placa} · ${dados.pago_ate?'Pago até '+dados.pago_ate:'Validade anterior não disponível'}`;
+            document.getElementById('renovarAntesSaida').disabled=!dados.mensalista_id;closePopup('saidaPopup');openPopup('mensalistaVencidoPopup');return;
+        }
         window.dadosPagamento = { ...dados,turno_id:shift.id,entryId:dados.entry_id,valor:dados.valor,tempo:dados.tempo,horaEntrada:new Date(dados.entrada_em),horaSaida:new Date(dados.saida_em) };
         document.getElementById('resumoPagamento').innerHTML = `<h4>Resumo da permanência</h4><p>Placa: <strong>${escapeHtml(dados.placa)}</strong></p><p>Entrada: ${escapeHtml(new Date(dados.entrada_em).toLocaleString('pt-BR'))}</p><p>Permanência: ${escapeHtml(dados.tempo)}</p><p>Tipo: ${escapeHtml(dados.tipo)}</p>${dados.diaria_retirada_em?`<p>Diária já paga: ${formatCurrency(dados.diaria_valor_pago)}</p><p>Retirada combinada: ${escapeHtml(new Date(dados.diaria_retirada_em).toLocaleString('pt-BR',{timeZone:dados.fuso}))}</p><p>Atraso: ${escapeHtml(dados.atraso_minutos)} min</p>`:''}<p class="valor-total">${dados.diaria_retirada_em?'Atraso a pagar':'Total'}: ${formatCurrency(dados.valor)}</p><p class="help-text">Valor confirmado pelo servidor. Cotação válida por 2 minutos.</p>`;
         closePopup('saidaPopup');
@@ -1186,7 +1191,7 @@ function updatePatioCarList() {
                          <p><b>Cor:</b> ${escapeHtml(ent.cor)}</p>
                          <p><b>Tempo no Pátio:</b> ${tempoFormatado}</p>
                          ${ent.diaria_retirada_em?`<p><b>Diária paga:</b> ${formatCurrency(ent.diaria_valor_pago)}</p><p><b>Retirar até:</b> ${escapeHtml(new Date(ent.diaria_retirada_em).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}))}</p>`:''}
-                         <p><b>Estimativa:</b> <span class="valor-devido">R$ ${total.toFixed(2)}</span></p>
+                         <p><b>${ent.mensalista?'Mensalidade':'Estimativa'}:</b> <span class="valor-devido">${ent.mensalista?'Conferir validade e eventual renovação na saída':`R$ ${total.toFixed(2)}`}</span></p>
                          <div class="card-actions">
                              <button class="btn-saida-card" data-entry-id="${escapeHtml(ent.entryId)}">Registrar Saída</button>
                              ${ent.diaria_valor_pago!=null?'':`<button class="btn-cancel-card" data-entry-id="${escapeHtml(ent.entryId)}" title="Cancelar entrada">Cancelar</button>`}
@@ -1243,7 +1248,7 @@ async function importarBackup(event) {
     try{
         if(file.size>10*1024*1024)throw new Error('O limite do arquivo é 10 MB.');
         const payload=JSON.parse(await file.text());
-        if(payload.formato!=='estacionamento-operacional'||![1,2].includes(payload.versao)||!payload.tabelas)throw new Error('Selecione um backup operacional no formato atual.');
+        if(payload.formato!=='estacionamento-operacional'||![1,2,3].includes(payload.versao)||!payload.tabelas)throw new Error('Selecione um backup operacional no formato atual.');
         restoreCandidate=payload;
         document.getElementById('restoreResumo').textContent=`Arquivo com ${Object.values(payload.tabelas).reduce((n,rows)=>n+(Array.isArray(rows)?rows.length:0),0)} registros. Confira se este é o backup desejado.`;
         document.getElementById('restoreForm').reset();document.getElementById('restoreMessage').textContent='';
@@ -1270,388 +1275,20 @@ async function abrirComprovanteOperacao(key){
     }catch(error){notify(error.message,'error');}
 }
 
-function limparFormMensalista() {
-    window.mensalistaEditId = null;
-    document.getElementById('mensalistaPlaca').value = '';
-    document.getElementById('mensalistaNomeForm').value = '';
-    document.getElementById('mensalistaTelefoneForm').value = '';
-    document.getElementById('mensalistaCpfForm').value = '';
-    document.getElementById('mensalistaVencimento').value = '';
-    document.getElementById('mensalistaAtivo').checked = true;
-}
-
-function preencherFormMensalista(row) {
-    window.mensalistaEditId = row.id;
-    document.getElementById('mensalistaPlaca').value = row.placa || '';
-    document.getElementById('mensalistaNomeForm').value = row.nome || '';
-    document.getElementById('mensalistaTelefoneForm').value = row.telefone || '';
-    document.getElementById('mensalistaCpfForm').value = row.cpf || '';
-    document.getElementById('mensalistaVencimento').value = row.vencimento ? String(row.vencimento).slice(0, 10) : '';
-    document.getElementById('mensalistaAtivo').checked = row.ativo !== false;
-}
-
-async function salvarMensalista() {
-    const placa = normalizePlaca(document.getElementById('mensalistaPlaca').value);
-    const nome = document.getElementById('mensalistaNomeForm').value.trim();
-    const telefone = document.getElementById('mensalistaTelefoneForm').value.trim();
-    const cpf = document.getElementById('mensalistaCpfForm').value.trim();
-    const vencimento = document.getElementById('mensalistaVencimento').value;
-    const ativo = document.getElementById('mensalistaAtivo').checked;
-
-    if (!placa || !isValidPlaca(placa)) return alert('Informe uma placa válida.');
-    if (!nome) return alert('Nome é obrigatório.');
-
-    try {
-        const editId = window.mensalistaEditId;
-        const url = editId ? `${BACKEND_BASE}/mensalistas/${editId}` : `${BACKEND_BASE}/mensalistas`;
-        const method = editId ? 'PUT' : 'POST';
-        const res = await apiFetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ placa, nome, telefone, cpf, vencimento, ativo })
-        });
-        if (!res.ok) throw new Error('Erro ao salvar mensalista');
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error || 'Erro ao salvar mensalista');
-        limparFormMensalista();
-        carregarMensalistas();
-        alert('Mensalista salvo com sucesso.');
-    } catch (err) {
-        alert('Falha ao salvar mensalista: ' + err.message);
-    }
-}
-
-async function carregarMensalistas() {
-    const q = document.getElementById('mensalistasBusca').value.trim();
-    const status = document.getElementById('mensalistasStatus').value;
-    const params = new URLSearchParams();
-    if (q) params.append('q', q);
-    if (status) params.append('status', status);
-    const url = params.toString() ? `${BACKEND_BASE}/mensalistas?${params}` : `${BACKEND_BASE}/mensalistas`;
-
-    try {
-        const res = await apiFetch(url);
-        if (!res.ok) throw new Error('Erro ao carregar mensalistas');
-        const data = await res.json();
-        if (!data.success || !data.dados) throw new Error('Erro ao carregar mensalistas');
-        renderMensalistas(data.dados);
-    } catch (err) {
-        document.getElementById('mensalistasLista').innerHTML = '<p>Erro ao carregar mensalistas.</p>';
-    }
-}
-
-function renderMensalistas(lista) {
-    if (!lista || lista.length === 0) {
-        document.getElementById('mensalistasLista').innerHTML = '<p>Nenhum mensalista cadastrado.</p>';
-        document.getElementById('mensalidadeHistoricoConteudo').innerHTML = '<p>Selecione um mensalista para ver o histórico.</p>';
-        return;
-    }
-
-    let html = '<table><tr><th>Placa</th><th>Nome</th><th>CPF</th><th>Vencimento</th><th>Status</th><th>Ações</th></tr>';
-    lista.forEach((row) => {
-        const venc = row.vencimento ? String(row.vencimento).slice(0, 10) : '-';
-        html += `<tr>
-            <td>${escapeHtml(row.placa)}</td>
-            <td>${escapeHtml(row.nome)}</td>
-            <td>${escapeHtml(row.cpf || '-')}</td>
-            <td>${venc}</td>
-            <td>${row.ativo === false ? 'Inativo' : 'Ativo'}</td>
-            <td>
-                <button class="btn-ghost" data-edit-id="${row.id}">Editar</button>
-                <button class="btn-ghost" data-history-id="${row.id}">Histórico</button>
-                ${row.ativo === false ? '' : `<button class="btn-ghost" data-pay-id="${row.id}">Receber</button>`}
-            </td>
-        </tr>`;
-    });
-    html += '</table>';
-    document.getElementById('mensalistasLista').innerHTML = html;
-
-    document.querySelectorAll('#mensalistasLista [data-edit-id]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            const id = btn.getAttribute('data-edit-id');
-            const row = lista.find(r => String(r.id) === String(id));
-            if (row) preencherFormMensalista(row);
-        });
-    });
-
-    document.querySelectorAll('#mensalistasLista [data-pay-id]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            const id = btn.getAttribute('data-pay-id');
-            const row = lista.find(r => String(r.id) === String(id));
-            if (row) abrirPagamentoMensalidade(row);
-        });
-    });
-
-    document.querySelectorAll('#mensalistasLista [data-history-id]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            const id = btn.getAttribute('data-history-id');
-            const row = lista.find(r => String(r.id) === String(id));
-            if (row) carregarHistoricoMensalidade(row);
-        });
-    });
-}
-
-async function carregarHistoricoMensalidade(row) {
-    const container = document.getElementById('mensalidadeHistoricoConteudo');
-    if (!container) return;
-    container.innerHTML = '<p>Carregando histórico...</p>';
-
-    try {
-        const res = await apiFetch(`${BACKEND_BASE}/mensalistas/${row.id}/pagamentos?limit=100`);
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || 'Erro ao carregar histórico');
-
-        const lista = data.dados || [];
-        if (lista.length === 0) {
-            container.innerHTML = '<p>Nenhum pagamento registrado para este mensalista.</p>';
-            return;
-        }
-
-        let html = `<h5>${escapeHtml(row.nome)} - ${escapeHtml(row.placa)}</h5>`;
-        html += '<table><tr><th>Data</th><th>Hora</th><th>Forma</th><th>Valor</th><th>Obs.</th><th>Comprovante</th></tr>';
-        lista.forEach((item) => {
-            html += `<tr>
-                <td>${escapeHtml(item.data_pagamento)}</td>
-                <td>${escapeHtml(item.hora_pagamento)}</td>
-                <td>${escapeHtml(item.forma_pagamento || '-')}</td>
-                <td>R$ ${Number(item.valor_pago || 0).toFixed(2)}</td>
-                <td>${escapeHtml(item.observacao || '-')}</td>
-                <td>${item.operacao_chave ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(item.operacao_chave)}">Reimprimir</button>` : 'Registro antigo'}</td>
-            </tr>`;
-        });
-        html += '</table>';
-        container.innerHTML = html;
-    } catch (err) {
-        container.innerHTML = '<p>Erro ao carregar histórico.</p>';
-    }
-}
-
-function getMensalidadeTotal() {
-    const meses = Math.max(1, parseInt(document.getElementById('mensalidadeMeses')?.value || '1', 10) || 1);
-    const valor = parseFloat(document.getElementById('mensalidadeValor')?.value || '0');
-    return meses * (Number.isNaN(valor) ? 0 : valor);
-}
-
-function atualizarResumoMensalidade() {
-    const resumo = document.getElementById('mensalidadeResumo');
-    const info = document.getElementById('mensalidadeVencimentoEstimado');
-    if (!resumo || !window.mensalidadePagamento) return;
-
-    const meses = Math.max(1, parseInt(document.getElementById('mensalidadeMeses')?.value || '1', 10) || 1);
-    const total = getMensalidadeTotal();
-    const now = new Date();
-    const hoje = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    let vencAtual = window.mensalidadePagamento.vencimento ? String(window.mensalidadePagamento.vencimento).slice(0, 10) : null;
-    if (vencAtual && /^\d{4}-\d{2}-\d{2}$/.test(vencAtual)) {
-        const ano = Number(vencAtual.slice(0, 4));
-        if (!ano || ano < 2000) vencAtual = null;
-    } else {
-        vencAtual = null;
-    }
-    const baseVenc = vencAtual && vencAtual >= hoje ? vencAtual : hoje;
-    const proxVenc = addMonthsToISODateFront(baseVenc, meses);
-
-    resumo.innerHTML = `
-        <h4>Resumo da Mensalidade</h4>
-        <p><b>Mensalista:</b> <span>${escapeHtml(window.mensalidadePagamento.nome)}</span></p>
-        <p><b>Placa:</b> <span>${escapeHtml(window.mensalidadePagamento.placa)}</span></p>
-        <p><b>Vencimento atual:</b> <span>${formatBrDate(vencAtual)}</span></p>
-        <p class="valor-total"><b>Total a Pagar:</b> <span>${formatCurrency(total)}</span></p>
-    `;
-
-    if (info) {
-        info.textContent = `Próximo vencimento estimado: ${formatBrDate(proxVenc)}`;
-    }
-
-    updateSplitSummary('splitMensalidadeLista', 'splitMensalidadeTotal', 'splitMensalidadeRestante', total);
-}
-
-async function abrirPagamentoMensalidade(row) {
-    let shift;try{shift=await CashService.requireOwnShift();}catch(error){notify(error.message,'error');return;}
-    window.mensalidadePagamento = {turno_id:shift.id,
-        id: row.id,
-        placa: row.placa,
-        nome: row.nome,
-        vencimento: row.vencimento || null,
-        ativo: row.ativo !== false
-    };
-
-    window.mensalidadePagamento.operacao_id = crypto.randomUUID();
-    const valorMensal = parseFloat(localStorage.getItem('valorMensalidade') || '0');
-    const inputValor = document.getElementById('mensalidadeValor');
-    if (inputValor) inputValor.value = Number(valorMensal || 0).toFixed(2);
-    const inputMeses = document.getElementById('mensalidadeMeses');
-    if (inputMeses) inputMeses.value = '1';
-    const inputObs = document.getElementById('mensalidadeObservacao');
-    if (inputObs) inputObs.value = '';
-
-    atualizarResumoMensalidade();
-    resetSplitUI('splitMensalidadeLista', 'splitMensalidadeTotal', 'splitMensalidadeRestante', getMensalidadeTotal());
-    openPopup('mensalidadePagamentoPopup');
-}
-
-let mensalidadeBusy = false;
-async function confirmarPagamentoMensalidade() {
-    const current = window.mensalidadePagamento;
-    if (!current || mensalidadeBusy) return;
-    const total = getMensalidadeTotal(); const pagamentos = getSplitPayments('splitMensalidadeLista');
-    if (total <= 0 || !validateSplitTotal(total,pagamentos)) return notify('Confira o total e as formas de pagamento.','error');
-    mensalidadeBusy = true; document.getElementById('confirmarMensalidadeBtn').disabled = true;
-    try {
-        const data = await operationRequest('/mensalistas/pagamentos',{ mensalista_id:current.id,turno_id:current.turno_id,meses:Number(document.getElementById('mensalidadeMeses').value),observacao:document.getElementById('mensalidadeObservacao').value.trim(),pagamentos,operacao_id:current.operacao_id });
-        await ReceiptService.render('comprovanteMensalidade',data.comprovante);
-        closePopup('mensalidadePagamentoPopup'); openPopup('comprovanteMensalidadePopup');
-        await carregarMensalistas();
-        await CashService.refresh();
-        await carregarHistoricoMensalidade(current); window.mensalidadePagamento = null;
-    } catch (error) { notify(error.message,'error',6000); }
-    finally { mensalidadeBusy = false; document.getElementById('confirmarMensalidadeBtn').disabled = false; }
-}
-
-
-
-function carregarRelatorioResumo() {
-    const tipo = document.getElementById('filtroTipo')?.value || '';
-    const params = new URLSearchParams();
-    if (tipo) params.append('tipo', tipo);
-    const url = params.toString() ? `${BACKEND_BASE}/relatorio/resumo?${params}` : `${BACKEND_BASE}/relatorio/resumo`;
-    apiFetch(url)
-        .then(res => res.json())
-        .then(data => {
-            if (!data.success || !data.dados) {
-                document.getElementById('historicoConteudo').innerHTML = '<p>Erro ao carregar relatório</p>';
-                return;
-            }
-            const r = data.dados;
-            document.getElementById('historicoConteudo').innerHTML = `
-                <h4>Resumo Geral</h4>
-                <p><b>Total de Movimentações:</b> ${r.total_movimentacoes || 0}</p>
-                <p><b>Veículos no Pátio:</b> ${r.veiculos_no_patio || 0}</p>
-                <p><b>Total de Saídas:</b> ${r.total_saidas || 0}</p>
-                <p><b>Veículos Únicos:</b> ${r.total_veiculos_unicos || 0}</p>
-                <hr>
-                <p><b>Receita Total:</b> R$ ${Number(r.receita_total || 0).toFixed(2)}</p>
-                <p><b>Valor Médio por Saída:</b> R$ ${Number(r.valor_medio || 0).toFixed(2)}</p>
-            `;
-        })
-        .catch(err => {
-            console.error('[front] erro ao carregar relatório:', err);
-            document.getElementById('historicoConteudo').innerHTML = '<p>Erro ao conectar ao servidor</p>';
-        });
-}
-
-function carregarHistoricoCompleto(filtros = {}) {
-    let url = `${BACKEND_BASE}/historico`;
-    const params = new URLSearchParams();
-    
-    if (filtros.dia) params.append('dia', filtros.dia);
-    if (filtros.mes) params.append('mes', filtros.mes);
-    if (filtros.ano) params.append('ano', filtros.ano);
-    if (filtros.tipo) params.append('tipo', filtros.tipo);
-    
-    if (params.toString()) url += '?' + params.toString();
-    
-    apiFetch(url)
-        .then(res => res.json())
-        .then(data => {
-            if (!data.success || !data.dados) {
-                document.getElementById('historicoConteudo').innerHTML = '<p>Nenhum histórico encontrado</p>';
-                return;
-            }
-            if (data.dados.length === 0) {
-                document.getElementById('historicoConteudo').innerHTML = '<p>Nenhum registro no histórico</p>';
-                return;
-            }
-            let html = '<h4>Histórico Completo</h4><table><tr><th>Placa</th><th>Tipo</th><th>Marca/Modelo</th><th>Entrada</th><th>Saída</th><th>Tempo</th><th>Valor</th><th>Status</th><th>Comprovante</th></tr>';
-            data.dados.forEach(row => {
-                html += `<tr>
-                    <td>${escapeHtml(row.placa)}</td>
-                    <td>${formatTipoRegistro(row)}</td>
-                    <td>${escapeHtml(row.marca)} ${escapeHtml(row.modelo)}</td>
-                    <td>${row.data_entrada} ${row.hora_entrada}</td>
-                    <td>${row.data_saida || '-'} ${row.hora_saida || '-'}</td>
-                    <td>${escapeHtml(row.tempo_permanencia || '-')}</td>
-                    <td>R$ ${Number(row.valor_pago || 0).toFixed(2)}</td>
-                    <td>${escapeHtml(row.status)}</td>
-                    <td>${row.operacao_id ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.operacao_id)}">Reimprimir</button>` : '-'}${row.diaria_operacao_id?`<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.diaria_operacao_id)}">Diária paga</button>`:''}</td>
-                </tr>`;
-            });
-            html += '</table>';
-            document.getElementById('historicoConteudo').innerHTML = html;
-        })
-        .catch(err => {
-            console.error('[front] erro ao carregar histórico:', err);
-            document.getElementById('historicoConteudo').innerHTML = '<p>Erro ao conectar ao servidor</p>';
-        });
-}
-
-function aplicarFiltroData() {
-    const dia = document.getElementById('filtroDia').value;
-    const mes = document.getElementById('filtroMes').value;
-    const ano = document.getElementById('filtroAno').value;
-    const tipo = document.getElementById('filtroTipo').value;
-    
-    if (!dia && !mes && !ano && !tipo) {
-        alert('Selecione pelo menos um filtro (dia, mês, ano ou tipo)');
-        return;
-    }
-    
-    const filtros = {};
-    if (dia) filtros.dia = dia;
-    if (mes) filtros.mes = mes;
-    if (ano) filtros.ano = ano;
-    if (tipo) filtros.tipo = tipo;
-    
-    carregarHistoricoCompleto(filtros);
-}
-
-function limparFiltro() {
-    document.getElementById('filtroDia').value = '';
-    document.getElementById('filtroMes').value = '';
-    document.getElementById('filtroAno').value = '';
-    document.getElementById('filtroTipo').value = '';
-    carregarHistoricoCompleto();
-}
-
-function buscarPorPlaca() {
-    const placa = prompt('Digite a placa para buscar:');
-    if (!placa) return;
-    
-    const placaNorm = normalizePlaca(placa);
-    apiFetch(`${BACKEND_BASE}/historico/${placaNorm}`)
-        .then(res => res.json())
-        .then(data => {
-            if (!data.success || !data.dados) {
-                document.getElementById('historicoConteudo').innerHTML = '<p>Erro ao buscar</p>';
-                return;
-            }
-            if (data.dados.length === 0) {
-                document.getElementById('historicoConteudo').innerHTML = '<p>Nenhum registro encontrado para placa: ' + placaNorm + '</p>';
-                return;
-            }
-            let html = '<h4>Histórico da Placa: ' + placaNorm + '</h4><table><tr><th>Tipo</th><th>Data Entrada</th><th>Hora Entrada</th><th>Data Saída</th><th>Hora Saída</th><th>Tempo</th><th>Valor</th><th>Status</th><th>Comprovante</th></tr>';
-            data.dados.forEach(row => {
-                html += `<tr>
-                    <td>${formatTipoRegistro(row)}</td>
-                    <td>${row.data_entrada}</td>
-                    <td>${row.hora_entrada}</td>
-                    <td>${row.data_saida || '-'}</td>
-                    <td>${row.hora_saida || '-'}</td>
-                    <td>${escapeHtml(row.tempo_permanencia || '-')}</td>
-                    <td>R$ ${Number(row.valor_pago || 0).toFixed(2)}</td>
-                    <td>${escapeHtml(row.status)}</td>
-                    <td>${row.operacao_id ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.operacao_id)}">Reimprimir</button>` : '-'}${row.diaria_operacao_id?`<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.diaria_operacao_id)}">Diária paga</button>`:''}</td>
-                </tr>`;
-            });
-            html += '</table>';
-            document.getElementById('historicoConteudo').innerHTML = html;
-        })
-        .catch(err => {
-            console.error('[front] erro ao buscar histórico:', err);
-            document.getElementById('historicoConteudo').innerHTML = '<p>Erro ao conectar ao servidor</p>';
-        });
-}
-
+function limparFormMensalista(){return SubscriptionService.clearForm(true);}
+function preencherFormMensalista(row){return SubscriptionService.edit(row);}
+function salvarMensalista(){return SubscriptionService.save();}
+function carregarMensalistas(){return SubscriptionService.load();}
+function carregarHistoricoMensalidade(row){return SubscriptionService.history(row);}
+function getMensalidadeTotal(){return SubscriptionService.total();}
+function atualizarResumoMensalidade(){return SubscriptionService.preview();}
+function abrirPagamentoMensalidade(row){return SubscriptionService.openPayment(row);}
+function confirmarPagamentoMensalidade(){return SubscriptionService.pay();}
+function carregarRelatorioResumo(){return ReportService.summary();}
+function carregarHistoricoCompleto(){return ReportService.vehicles();}
+function aplicarFiltroData(){return ReportService.vehicles();}
+function limparFiltro(){return ReportService.clearFilters();}
+function buscarPorPlaca(){return ReportService.search();}
 ///////////////////////////
 // dashboard caixa
 ///////////////////////////
@@ -1677,140 +1314,4 @@ function normalizeFormaPagamento(value) {
     return raw;
 }
 
-async function gerarRelatorioCaixa() {
-    const dataInicio = document.getElementById('dataInicioCaixa').value;
-    const dataFim = document.getElementById('dataFimCaixa').value;
-    
-    if (!dataInicio && !dataFim) {
-        alert('Selecione pelo menos uma data');
-        return;
-    }
-    
-    try {
-        // Converte para formato brasileiro
-        const params = new URLSearchParams();
-        if (dataInicio) {
-            const [ano, mes, dia] = dataInicio.split('-');
-            params.append('dataInicio', `${dia}/${mes}/${ano}`);
-        }
-        if (dataFim) {
-            const [ano, mes, dia] = dataFim.split('-');
-            params.append('dataFim', `${dia}/${mes}/${ano}`);
-        }
-        
-        const res = await apiFetch(`${BACKEND_BASE}/caixa/relatorio?${params}`);
-        if (!res.ok) throw new Error('Erro ao gerar relatório');
-        
-        const data = await res.json();
-        
-        if (!data.success || !data.dados) {
-            document.getElementById('relatorioCaixaConteudo').innerHTML = '<p>Erro ao gerar relatório</p>';
-            return;
-        }
-        
-        // Agrupa por data e calcula totais
-        const porData = {};
-        let totalGeral = 0;
-        let totalDinheiro = 0;
-        let totalCredito = 0;
-        let totalDebito = 0;
-        let totalPix = 0;
-        let totalTransacoes = 0;
-        
-        data.dados.forEach(item => {
-            if (!porData[item.data_saida]) {
-                porData[item.data_saida] = { total: 0, formas: {} };
-            }
-            const itemTotal = Number(item.total || 0);
-            const itemQtd = Number(item.quantidade || 0);
-            const formaLabel = normalizeFormaPagamento(item.forma_pagamento) || 'Não informado';
-            porData[item.data_saida].total += itemTotal;
-
-            if (!porData[item.data_saida].formas[formaLabel]) {
-                porData[item.data_saida].formas[formaLabel] = {
-                    data_saida: item.data_saida,
-                    forma_pagamento: formaLabel,
-                    quantidade: 0,
-                    total: 0
-                };
-            }
-            porData[item.data_saida].formas[formaLabel].quantidade += itemQtd;
-            porData[item.data_saida].formas[formaLabel].total += itemTotal;
-
-            totalGeral += itemTotal;
-            totalTransacoes += itemQtd;
-
-            if (formaLabel === 'Dinheiro') totalDinheiro += itemTotal;
-            if (formaLabel === 'Cartão de Crédito') totalCredito += itemTotal;
-            if (formaLabel === 'Cartão de Débito') totalDebito += itemTotal;
-            if (formaLabel === 'Pix') totalPix += itemTotal;
-        });
-        
-        // Gera HTML do relatório
-        let html = `
-            <div class="resumo-financeiro">
-                <div class="resumo-card">
-                    <h4>Total Recebido</h4>
-                    <p>R$ ${totalGeral.toFixed(2)}</p>
-                </div>
-                <div class="resumo-card">
-                    <h4>Transações</h4>
-                    <p>${totalTransacoes}</p>
-                </div>
-                <div class="resumo-card">
-                    <h4>💵 Dinheiro</h4>
-                    <p>R$ ${totalDinheiro.toFixed(2)}</p>
-                </div>
-                <div class="resumo-card">
-                    <h4>💳 Crédito</h4>
-                    <p>R$ ${totalCredito.toFixed(2)}</p>
-                </div>
-                <div class="resumo-card">
-                    <h4>💳 Débito</h4>
-                    <p>R$ ${totalDebito.toFixed(2)}</p>
-                </div>
-                <div class="resumo-card">
-                    <h4>📱 Pix</h4>
-                    <p>R$ ${totalPix.toFixed(2)}</p>
-                </div>
-            </div>
-            
-            <h4>Detalhamento por Data</h4>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Data</th>
-                        <th>Forma de Pagamento</th>
-                        <th>Quantidade</th>
-                        <th>Total (R$)</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-        
-        Object.keys(porData).sort().reverse().forEach(data => {
-            const primeiro = true;
-            Object.values(porData[data].formas).forEach(item => {
-                html += `
-                    <tr>
-                        <td>${item.data_saida}</td>
-                        <td>${escapeHtml(item.forma_pagamento)}</td>
-                        <td style="text-align:center">${item.quantidade}</td>
-                        <td style="text-align:right">R$ ${Number(item.total).toFixed(2)}</td>
-                    </tr>
-                `;
-            });
-        });
-        
-        html += `
-                </tbody>
-            </table>
-        `;
-        
-        document.getElementById('relatorioCaixaConteudo').innerHTML = html;
-        
-    } catch (err) {
-        console.error('[front] erro ao gerar relatório:', err);
-        document.getElementById('relatorioCaixaConteudo').innerHTML = '<p>Erro ao conectar ao servidor</p>';
-    }
-}
+async function gerarRelatorioCaixa(){return ReportService.financial();}

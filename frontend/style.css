@@ -704,3 +704,7 @@ input[type="password"]{display:block;width:100%;padding:11px 12px;border:1px sol
 #comprovanteCaixa{max-width:300px;margin:auto;background:white;color:black}
 textarea{display:block;width:100%;border:1px solid #d3dfe4;border-radius:9px;padding:10px;font:inherit}
 @media(max-width:480px){.cash-count-grid{grid-template-columns:1fr}}
+.subscription-alerts{border:1px solid #e9b767;background:#fff7e8;padding:16px;border-radius:12px;margin-bottom:18px;color:#4f3a20}.subscription-alerts h3{margin-top:0}.subscription-alerts p{margin:7px 0;font-size:13px}
+.report-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:14px 0;font-size:13px}.report-pagination button:disabled{opacity:.45;cursor:default}
+.subscription-status{display:inline-block;padding:5px 8px;border-radius:6px;background:#e7f4ed}.subscription-status.vencido,.subscription-status.suspenso,.subscription-status.cancelado{background:#ffe4e0;color:#8a2922}.subscription-status.a_vencer,.subscription-status.vence_hoje{background:#fff0c7;color:#734900}
+.legacy-regularization{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:8px}#historicoConteudo pre{white-space:pre-wrap;max-width:450px;overflow-wrap:anywhere}.filtro-grupo{flex-wrap:wrap}#diaristaFields[hidden],#mensalistasAvisos[hidden]{display:none}

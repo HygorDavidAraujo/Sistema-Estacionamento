@@ -58,7 +58,8 @@ test('caixa único, recebimentos por responsável, conferência e versões de fe
         const free=await post(a,'/entrada',{placa:'DEF4G56'});const q=(await post(a,'/saida/cotacao',{entryId:free.data.entry_id})).data.dados;
         assert.equal((await post(a,'/saida',{turno_id:shift,cotacao_id:q.cotacao_id,pagamentos:[]})).status,200);
         const id=(await system.db.query("INSERT INTO mensalistas (placa,nome) VALUES ('GHI7J89','Cliente mensal') RETURNING id")).rows[0].id;
-        assert.equal((await post(a,'/mensalistas/pagamentos',{turno_id:shift,mensalista_id:id,meses:1,pagamentos:[{forma_pagamento:'Dinheiro',valor_pago:300}]})).status,200);
+        const monthlyQuote=(await post(a,`/mensalistas/${id}/cotacao`,{meses:1})).data.dados;
+        assert.equal((await post(a,'/mensalistas/pagamentos',{turno_id:shift,mensalista_id:id,meses:1,revisao:monthlyQuote.revisao,cobranca_id:monthlyQuote.cobranca_id,periodo_previsto:monthlyQuote.fim_periodo,pagamentos:[{forma_pagamento:'Dinheiro',valor_pago:300}]})).status,200);
         const s=await summary(a);assert.equal(s.total_recebido,307.5);assert.equal(s.saldo_esperado,412.5);assert.equal(s.total_transacoes,2);assert.equal(s.total_parcelas,3);assert.equal(s.saidas,2);
         const rows=(await system.db.query('SELECT DISTINCT operador_id,turno_id FROM caixa_movimentos')).rows;assert.equal(rows.length,1);assert.equal(String(rows[0].turno_id),String(shift));
     });
@@ -89,9 +90,12 @@ test('caixa único, recebimentos por responsável, conferência e versões de fe
         s=await summary(a);const corrected=await post(a,'/caixa/turnos/fechar',{turno_id:shift,revisao:s.revisao,contagem:count(s)});assert.equal(corrected.status,200);assert.equal(corrected.data.comprovante.versao,2);
         const old=(await system.db.query('SELECT * FROM caixa_conferencias WHERE id=$1',[conference])).rows[0];assert.ok(old.substituida_em);assert.deepEqual(old.comprovante,closed.comprovante);
         const consolidated=(await admin.request('/caixa/consolidado')).data.dados;assert.equal(consolidated.turnos,2);assert.equal(consolidated.receita,307.5);assert.equal(consolidated.diferenca_dinheiro,0);
+        const page1=(await admin.request('/caixa/turnos?limite=1&pagina=1')).data,page2=(await admin.request('/caixa/turnos?limite=1&pagina=2')).data;
+        assert.equal(page1.dados.length,1);assert.equal(page2.dados.length,1);assert.notEqual(page1.dados[0].id,page2.dados[0].id);assert.equal(page1.paginacao.total,3);
+        const history=(await admin.request('/caixa/fechamentos?limite=1')).data;assert.equal(history.paginacao.total,3);assert.equal(history.dados.length,1);assert.equal(history.paginacao_legados.total,2);
     });
     await t.test('backup contém ajustes, conferências e versões e restaura os relacionamentos',async()=>{
-        const backup=(await admin.request('/backup')).data.dados;assert.equal(backup.versao,2);
+        const backup=(await admin.request('/backup')).data.dados;assert.equal(backup.versao,3);
         for(const name of ['caixa_ajustes','caixa_conferencias','caixa_acoes'])assert.ok(backup.tabelas[name].length);
         const restored=await admin.request('/restore','POST',{backup,confirmacao:'RESTAURAR',senha:'Senha-segura-123'});assert.equal(restored.status,200,JSON.stringify(restored.data));
         assert.equal((await system.db.query('SELECT COUNT(*)::int AS n FROM caixa_conferencias')).rows[0].n,3);
@@ -99,7 +103,7 @@ test('caixa único, recebimentos por responsável, conferência e versões de fe
     });
     await t.test('backup da etapa anterior é convertido para legado sem inventar vínculos financeiros',async()=>{
         const backup=(await admin.request('/backup')).data.dados;backup.versao=1;
-        for(const name of ['caixa_ajustes','caixa_conferencias','caixa_acoes'])delete backup.tabelas[name];
+        for(const name of ['caixa_ajustes','caixa_conferencias','caixa_acoes','mensalista_contratos','mensalista_veiculos','mensalista_cobrancas'])delete backup.tabelas[name];
         for(const row of backup.tabelas.caixa_turnos)for(const key of ['operador_id','operador_nome','fundo_inicial','estado','revisao','ultima_conferencia_id'])delete row[key];
         for(const row of backup.tabelas.caixa_movimentos)for(const key of ['turno_id','operador_id','operador_nome'])delete row[key];
         for(const row of backup.tabelas.operacoes_financeiras)delete row.turno_id;

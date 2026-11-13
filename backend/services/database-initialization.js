@@ -1,4 +1,4 @@
-export const schemaVersion = '003-prepaid-daily';
+export const schemaVersion = '004-subscriptions-reports';
 const migrationLock = 743221905;
 
 export function createDatabaseInitializer({ pool, loadSql, onApplied = () => {} }) {

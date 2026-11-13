@@ -21,7 +21,7 @@ O histórico apresenta turnos, versões de conferência, recebimentos, diferenç
 
 O consolidado considera a **data operacional de abertura do turno**, inclusive quando o fechamento acontece depois da meia-noite. Soma somente a conferência atual dos turnos encerrados ou aguardando aprovação. Versões substituídas e turnos abertos ficam fora desse consolidado; os recebimentos do turno aberto aparecem no painel do caixa. A soma do dinheiro esperado/contado representa conferências de vários turnos e pode conter o mesmo fundo reapresentado em turnos sucessivos: não representa receita nem o saldo físico atual.
 
-As consultas por período mostram até 200 turnos/conferências e até 100 resumos diários antigos. O consolidado do período considera todos os turnos elegíveis, independentemente desse limite de listagem. Paginação e a ampliação dos relatórios permanecem para o passo 3.
+O [passo 3](PASSO_3_IMPLEMENTACAO.md) acrescentou paginação independente para turnos, conferências e resumos diários antigos. O consolidado do período considera todos os turnos elegíveis, independentemente da página exibida.
 
 ## Dados anteriores e backup
 

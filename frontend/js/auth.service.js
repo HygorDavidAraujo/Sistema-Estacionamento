@@ -36,6 +36,7 @@
             btnMenu: ['administrador'], btnUsuarios: ['administrador'], btnMinhaSenha: Object.keys(roles),
             btnFecharCaixa: Object.keys(roles), btnTurnoCaixa: Object.keys(roles),
             btnBackupImport: ['administrador'], btnBackupExport: ['administrador']
+            ,btnRelatorioResumo:['supervisor','financeiro','administrador'],btnExportarHistorico:['supervisor','financeiro','administrador'],btnExportarMensalistas:['supervisor','financeiro','administrador'],btnVerAuditoria:['supervisor','administrador']
         };
         for (const [id, allowed] of Object.entries(permissions)) if (el(id)) el(id).hidden = !allowed.includes(role);
         if (el('caixaSidebar')) el('caixaSidebar').hidden = !user;
@@ -55,6 +56,7 @@
         window.dadosPagamento = null; window.mensalidadePagamento = null;
         window.ReceiptService?.clear();
         window.CashService?.clear();
+        window.SubscriptionService?.clear();window.ReportService?.clear();
         if(el('comprovanteCaixa'))el('comprovanteCaixa').replaceChildren();
         window.PlateCamera?.close();
         document.querySelectorAll('.popup').forEach(popup => popup.setAttribute('aria-hidden','true'));

@@ -92,7 +92,7 @@ Para checar somente os comprovantes: `npm run test:browser -- --grep "comprovant
 |---|---|
 | 1. Proteger acesso, cobrança e dados; compactar comprovantes | Implementada localmente; evidências e testes descritos acima |
 | 2. Estruturar caixa e turnos | Implementada localmente; detalhes em PASSO_2_IMPLEMENTACAO.md |
-| 3. Organizar contratos, mensalistas e relatórios | Aguardando autorização do usuário |
-| 4. Consolidar operação, automações, recuperação e produtividade | Aguardando a conclusão do passo 3 |
+| 3. Organizar contratos, mensalistas e relatórios | Implementada localmente; detalhes em PASSO_3_IMPLEMENTACAO.md |
+| 4. Consolidar operação, automações, recuperação e produtividade | Aguardando autorização do usuário |
 
 Backup automático, recuperação das credenciais, política de manutenção na restauração, testes com banco da hospedagem, validação física da impressão e contingência continuam como atividades da consolidação operacional. O backup atual protege e recupera os dados operacionais; o arquivo não substitui a recuperação de usuários/senhas ou uma imagem integral da instância PostgreSQL.

@@ -8,9 +8,12 @@
     const dt=value=>value?new Date(value).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'-';
     const show=id=>{document.activeElement?.blur();document.querySelectorAll('.popup').forEach(p=>p.setAttribute('aria-hidden',p.id===id?'false':'true'));el(id)?.querySelector('button,input,select,textarea')?.focus();};
     const row=(name,value)=>`<p><span>${escape(name)}</span><strong>${escape(value)}</strong></p>`;
+    let historyPages={turn:1,close:1,legacy:1};
+    const historyPager=(p,kind)=>`<div class="report-pagination"><button data-cash-action="page" data-kind="${kind}" data-id="${p.pagina-1}" ${p.pagina<=1?'disabled':''}>Anterior</button><span>Página ${p.pagina} de ${p.paginas} · ${p.total} registros</span><button data-cash-action="page" data-kind="${kind}" data-id="${p.pagina+1}" ${p.pagina>=p.paginas?'disabled':''}>Próxima</button></div>`;
     async function request(path,body){
+        const actor=AuthService.user;
         const res=await AuthService.fetch(`${window.BACKEND_BASE}${path}`,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
-        const data=await res.json().catch(()=>({}));if(!res.ok||!data.success)throw Object.assign(new Error(data.error||'Não foi possível consultar o caixa'),{status:res.status});return data;
+        const data=await res.json().catch(()=>({}));if(actor!==AuthService.user)throw Error('Sessão encerrada');if(!res.ok||!data.success)throw Object.assign(new Error(data.error||'Não foi possível consultar o caixa'),{status:res.status});return data;
     }
     function render(){
         const summary=current?.resumo;
@@ -56,17 +59,19 @@
     });}
     async function openMovement(){await refresh();if(!current||!current.pode_operar&&!manager())return notify('O turno pertence a outro operador.','error');movementKey=crypto.randomUUID();el('movimentoValor').value='';el('movimentoMotivo').value='';show('movimentoCaixaPopup');}
     async function movement(){return busy('registrarMovimentoCaixaBtn',async()=>{const data=await request('/caixa/ajustes',{turno_id:current?.id,tipo:el('movimentoTipo').value,valor:el('movimentoValor').value,motivo:el('movimentoMotivo').value,operacao_id:movementKey||=crypto.randomUUID()});await refresh();await receipt(data.comprovante);});}
-    async function history(){
+    async function history(pages){
+        historyPages=pages?{...historyPages,...pages}:{turn:1,close:1,legacy:1};
         const start=el('dataInicioFechamentos').value||'2000-01-01',end=el('dataFimFechamentos').value||new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo'}).format(new Date());
         const params=new URLSearchParams({dataInicio:start,dataFim:end});const container=el('fechamentosConteudo');container.textContent='Carregando turnos e conferências…';
         try{
-            const [data,turns,consolidated]=await Promise.all([request(`/caixa/fechamentos?${params}`),request(`/caixa/turnos?${params}`),finance()?request(`/caixa/consolidado?${params}`):null]);
+            const [data,turns,consolidated]=await Promise.all([request(`/caixa/fechamentos?${params}&limite=20&pagina=${historyPages.close}&paginaLegados=${historyPages.legacy}`),request(`/caixa/turnos?${params}&limite=20&pagina=${historyPages.turn}`),finance()?request(`/caixa/consolidado?${params}`):null]);
             let html='';if(consolidated){const s=consolidated.dados;html=`<div class="resumo-pagamento">${row('Data operacional (abertura)',`${start} a ${end}`)}${row('Turnos encerrados / pendentes',`${s.turnos} / ${s.pendentes}`)}${row('Receita dos turnos',money(s.receita))}${row('Soma das conferências: esperado / contado',`${money(s.dinheiro_esperado)} / ${money(s.dinheiro_contado)}`)}${row('Diferença em dinheiro',money(s.diferenca_dinheiro))}</div>`;}
             html+='<h4>Conferências por turno e versão</h4><div class="cash-table-scroll"><table><tr><th>Data / responsável</th><th>Turno / versão</th><th>Recebido</th><th>Diferença em dinheiro</th><th>Estado</th><th>Ações</th></tr>';
             for(const c of data.dados){const state=c.substituida_em?'Substituída por nova conferência':c.estado==='pendente'?'Aguardando aprovação':'Aprovada';html+=`<tr><td>${escape(c.data_ref)}<br>${escape(c.operador_nome)}</td><td>#${escape(c.turno_id)} / v${escape(c.versao)}</td><td>${money(c.resumo.total_recebido)}</td><td>${money(c.diferencas.dinheiro)}</td><td>${state}</td><td><button data-cash-action="print" data-key="${escape(c.comprovante.numero)}">Imprimir</button><button data-cash-action="detail" data-id="${escape(c.turno_id)}">Detalhes</button>${manager()&&!c.substituida_em?`<button data-cash-action="reopen" data-id="${escape(c.turno_id)}">Reabrir</button>`:''}${manager()&&!c.substituida_em&&c.estado==='pendente'?`<button data-cash-action="approve" data-id="${escape(c.id)}">Aprovar diferença</button>`:''}</td></tr>`;}
-            html+='</table></div><h4>Turnos e registros anteriores</h4>';
+            html+='</table></div>'+historyPager(data.paginacao,'close')+'<h4>Turnos e registros anteriores</h4>';
             for(const shift of turns.dados){html+=`<p>#${escape(shift.id)} · ${escape(shift.operador_nome||'Registro antigo')} · ${escape(({aberto:'Aberto',fechado:'Fechado',aguardando_aprovacao:'Aguardando aprovação',legado:shift.fechado_em?'Legado encerrado':'Legado aberto'})[shift.estado]||shift.estado)} · ${escape(dt(shift.aberto_em))} <button data-cash-action="detail" data-id="${escape(shift.id)}">Detalhes</button>${shift.estado==='legado'&&!shift.fechado_em&&manager()?`<button data-cash-action="legacy" data-id="${escape(shift.id)}">Encerrar registro legado</button>`:''}</p>`;}
-            if(data.legados.length){html+='<h4>Resumos diários antigos (sem conferência por turno)</h4>';for(const legacy of data.legados)html+=`<p>${escape(legacy.data_iso)} · ${money(legacy.total_recebido)} · ${escape(legacy.observacao||'')}</p>`;}
+            html+=historyPager(turns.paginacao,'turn');
+            if(data.paginacao_legados.total){html+='<h4>Resumos diários antigos (sem conferência por turno)</h4>';for(const legacy of data.legados)html+=`<p>${escape(legacy.data_iso)} · ${money(legacy.total_recebido)} · ${escape(legacy.observacao||'')}</p>`;html+=historyPager(data.paginacao_legados,'legacy');}
             container.innerHTML=html+'<div id="cashHistoryDetail"></div>';
         }catch(error){container.textContent=error.message;}
     }
@@ -74,6 +79,7 @@
     async function historyAction(event){
         const button=event.target.closest('[data-cash-action]');if(!button)return;
         try{
+            if(button.dataset.cashAction==='page')return history({[button.dataset.kind]:Number(button.dataset.id)});
             if(button.dataset.cashAction==='print'){const data=await request(`/caixa/comprovantes/${encodeURIComponent(button.dataset.key)}`);return receipt(data.dados);}
             if(button.dataset.cashAction==='detail'){
                 const {dados}=await request(`/caixa/turnos/${button.dataset.id}/resumo`);let html=`<h4>Detalhes do turno #${escape(button.dataset.id)}</h4>`;

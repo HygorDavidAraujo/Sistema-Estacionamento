@@ -9,6 +9,7 @@
         .receipt h2{font-size:12px;text-align:center;margin:1mm 0;padding:1mm 0;border-top:1px dashed #555;border-bottom:1px dashed #555}
         .receipt p{margin:.6mm 0}.receipt .center{text-align:center}.receipt .line{display:flex;justify-content:space-between;gap:2mm;margin:.6mm 0}
         .receipt .line span:last-child{text-align:right}.receipt .total{font-size:14px;font-weight:bold;border-top:1px dashed #555;margin-top:1mm;padding-top:1mm}
+        .receipt .line span:first-child{flex-shrink:0;max-width:55%;overflow-wrap:normal}.receipt .line span:last-child{min-width:0}
         .receipt .small{font-size:9px}.receipt .qr{display:flex;justify-content:center;margin:1.5mm auto}.receipt .qr img,.receipt .qr canvas{display:block;max-width:25mm!important;height:auto!important}
         .receipt .footer{border-top:1px dashed #555;margin-top:1mm;padding-top:1mm}.receipt .plate{font-size:16px;font-weight:bold;text-align:center;letter-spacing:1px}
         @media print{body{width:100%;-webkit-print-color-adjust:exact;print-color-adjust:exact}.receipt{padding:1mm 1.5mm}h1,h2,.line,.qr{break-inside:avoid}}`;
@@ -50,16 +51,20 @@
                 if(!receipt.diaria_retirada_em){result += line('Tolerância inicial',`${rates.tolerancia} min`);result += line('Diária antecipada',money(rates.diaria/100));}
             }
             if(receipt.diaria_retirada_em)result+=line('RETIRAR ATÉ',formatDate(receipt.diaria_retirada_em,tz),'total')+'<p class="small">Após o horário combinado: tarifa avulsa por hora iniciada, sem nova tolerância.</p>';
+            if(receipt.mensalista_cobertura_ate)result+=line('Benefício mensalista até',formatDate(new Date(new Date(receipt.mensalista_cobertura_ate).getTime()-1).toISOString(),tz));
             result += `<div class="qr" id="${qrId}"></div><p class="center small">Apresente este ticket na saída.</p>`;
         } else if (receipt.tipo === 'saida') {
             result += line('Entrada',formatDate(receipt.entrada_em,tz)) + line('Saída',formatDate(receipt.saida_em,tz)) + line('Permanência',receipt.tempo);
             result += line('Tipo',receipt.tipo_cliente || ({ mensalista:'Mensalista',diarista:'Diária antecipada',avulso:'Avulso' }[receipt.categoria]) || 'Avulso');
             if(receipt.diaria_retirada_em)result+=line('Retirada combinada',formatDate(receipt.diaria_retirada_em,tz))+line('Pago na entrada',money(receipt.diaria_valor_pago))+line('Atraso',`${receipt.atraso_minutos} min`);
+            if(receipt.mensalista_vencido)result+=line('Avulso após',formatDate(receipt.mensalista_cobertura_ate,tz))+'<p class="small">Cliente optou por não renovar. Período já quitado preservado.</p>';
             if (receipt.cobranca_ate) result += line('Cálculo até',formatDate(receipt.cobranca_ate,tz));
         } else {
-            result += line('Cliente',receipt.cliente) + line('Pagamento',formatDate(receipt.emitido_em,tz)) + line('Período',`${receipt.meses} ${receipt.meses === 1 ? 'mês':'meses'}`);
+            result += line('Cliente',receipt.cliente) + line('Pagamento',formatDate(receipt.emitido_em,tz)) + line('Período',receipt.dias?`${receipt.dias} dias`:`${receipt.meses} ${receipt.meses === 1 ? 'mês':'meses'}`);
+            if(receipt.cobranca_id)result+=line('Contrato / cobrança',`#${receipt.contrato_id} / #${receipt.cobranca_id}`)+line('Competência',receipt.competencia.slice(0,7));
             if (receipt.vencimento_anterior) result += line('Vencimento anterior',receipt.vencimento_anterior.split('-').reverse().join('/'));
-            result += line('Novo vencimento',receipt.novo_vencimento.split('-').reverse().join('/'));
+            if(receipt.novo_vencimento)result += line('Pago até',receipt.novo_vencimento.split('-').reverse().join('/'));
+            if(receipt.pagamento_parcial)result+='<p class="small">PAGAMENTO PARCIAL: novo período ainda não liberado.</p>'+line('Saldo da cobrança',money(receipt.saldo_pendente));
         }
         if (receipt.tipo !== 'entrada' || receipt.diaria_retirada_em) {
             result += line(receipt.diaria_retirada_em?(receipt.tipo==='entrada'?'DIÁRIA PAGA':'PAGO NA SAÍDA'):'TOTAL PAGO',money(receipt.total),'total');
