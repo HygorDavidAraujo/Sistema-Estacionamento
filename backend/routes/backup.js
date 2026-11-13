@@ -2,15 +2,18 @@ import express from 'express';
 import { createHash } from 'node:crypto';
 import { audit, fail } from '../services/financial-domain.js';
 import { verifyPassword } from '../services/auth.js';
-const tables = ['configuracoes','mensalistas','historico','caixa_turnos','caixa_fechamentos','caixa_movimentos','auditoria','operacoes_financeiras','veiculos_cache'];
+const oldTables = ['configuracoes','mensalistas','historico','caixa_turnos','caixa_fechamentos','caixa_movimentos','auditoria','operacoes_financeiras','veiculos_cache'];
+const tables = [...oldTables,'caixa_ajustes','caixa_conferencias','caixa_acoes'];
+const keyColumn=table=>table==='veiculos_cache'?'placa':['operacoes_financeiras','caixa_acoes'].includes(table)?'chave':'id';
 const checksum = data => createHash('sha256').update(JSON.stringify(data)).digest('hex');
 function validate(backup) {
-    if (!backup || backup.formato !== 'estacionamento-operacional' || backup.versao !== 1 || !backup.tabelas || backup.checksum !== checksum(backup.tabelas)) fail('Backup inválido, incompleto ou com verificação de integridade incorreta');
-    if (Object.keys(backup.tabelas).sort().join() !== [...tables].sort().join()) fail('O backup não contém todas as tabelas exigidas');
-    for (const table of tables) {
+    if (!backup || backup.formato !== 'estacionamento-operacional' || ![1,2].includes(backup.versao) || !backup.tabelas || backup.checksum !== checksum(backup.tabelas)) fail('Backup inválido, incompleto ou com verificação de integridade incorreta');
+    const expected=backup.versao===1?oldTables:tables;
+    if (Object.keys(backup.tabelas).sort().join() !== [...expected].sort().join()) fail('O backup não contém todas as tabelas exigidas');
+    for (const table of expected) {
         const rows = backup.tabelas[table];
         if (!Array.isArray(rows) || rows.length > 100000 || rows.some(row => !row || typeof row !== 'object' || Array.isArray(row))) fail(`Tabela inválida: ${table}`);
-        const keys = rows.map(row => table === 'veiculos_cache' ? row.placa : table === 'operacoes_financeiras' ? row.chave : String(row.id || ''));
+        const keys = rows.map(row => String(row[keyColumn(table)] || ''));
         if (keys.some(key => !key) || new Set(keys).size !== keys.length) fail(`Identificadores ausentes ou duplicados: ${table}`);
     }
     if (!backup.tabelas.configuracoes.some(row => row.chave === 'total_vagas')) fail('Configurações obrigatórias ausentes');
@@ -19,7 +22,21 @@ function validate(backup) {
     for (const row of backup.tabelas.caixa_movimentos) {
         if (row.historico_id && !history.has(String(row.historico_id)) || row.mensalista_id && !monthly.has(String(row.mensalista_id))) fail('O backup contém movimentos sem registro de origem');
     }
-    return backup.tabelas;
+    const result=structuredClone(backup.tabelas);
+    if(backup.versao===1){
+        for(const table of ['caixa_ajustes','caixa_conferencias','caixa_acoes'])result[table]=[];
+        result.caixa_turnos=result.caixa_turnos.map(row=>({...row,estado:'legado',operador_id:null,operador_nome:null,fundo_inicial:0,revisao:0,ultima_conferencia_id:null}));
+        result.caixa_movimentos=result.caixa_movimentos.map(row=>({...row,turno_id:null,operador_id:null,operador_nome:null}));
+        result.operacoes_financeiras=result.operacoes_financeiras.map(row=>({...row,turno_id:null}));
+    }
+    const shifts=new Map(result.caixa_turnos.map(row=>[String(row.id),row]));
+    const conferences=new Map(result.caixa_conferencias.map(row=>[String(row.id),row]));
+    if(result.caixa_turnos.filter(row=>row.estado==='aberto').length>1)fail('O backup contém mais de um caixa aberto');
+    for(const table of ['caixa_movimentos','operacoes_financeiras','caixa_ajustes','caixa_conferencias','caixa_acoes']){
+        for(const row of result[table])if(row.turno_id && !shifts.has(String(row.turno_id)))fail('Há movimentos ou conferências sem turno de origem');
+    }
+    for(const row of result.caixa_turnos)if(row.ultima_conferencia_id && String(conferences.get(String(row.ultima_conferencia_id))?.turno_id)!==String(row.id))fail('Conferência final do turno inválida');
+    return result;
 }
 export function createBackupRouter({ tx, allow }) {
     const router = express.Router();
@@ -29,11 +46,11 @@ export function createBackupRouter({ tx, allow }) {
             await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
             const result = {};
             // Tabelas e identificadores são constantes do servidor, nunca texto do arquivo.
-            for (const table of tables) result[table] = (await client.query(`SELECT * FROM ${table} ORDER BY ${table === 'veiculos_cache' ? 'placa' : table === 'operacoes_financeiras' ? 'chave' : 'id'}`)).rows;
+            for (const table of tables) result[table] = (await client.query(`SELECT * FROM ${table} ORDER BY ${keyColumn(table)}`)).rows;
             await audit(client,req.user,'backup_export',{ tabelas: tables, registros: Object.values(result).reduce((n,r) => n+r.length,0) });
             return result;
         });
-        res.json({ success:true, dados:{ formato:'estacionamento-operacional',versao:1,gerado_em:new Date().toISOString(),tabelas:data,checksum:checksum(data) } });
+        res.json({ success:true, dados:{ formato:'estacionamento-operacional',versao:2,gerado_em:new Date().toISOString(),tabelas:data,checksum:checksum(data) } });
     }));
     router.post('/restore', allow('administrador'), handle(async (req,res) => {
         if (req.body.confirmacao !== 'RESTAURAR') fail('Confirme a restauração digitando RESTAURAR');
@@ -53,7 +70,7 @@ export function createBackupRouter({ tx, allow }) {
             for (const table of [...tables].reverse()) await client.query(`DELETE FROM ${table}`);
             for (const table of tables) {
                 await client.query(`INSERT INTO ${table} SELECT * FROM restore_${table}`);
-                if (!['veiculos_cache','operacoes_financeiras'].includes(table)) await client.query(`SELECT setval(pg_get_serial_sequence('${table}','id'),COALESCE((SELECT MAX(id) FROM ${table}),1),(SELECT COUNT(*)>0 FROM ${table}))`);
+                if (keyColumn(table)==='id') await client.query(`SELECT setval(pg_get_serial_sequence('${table}','id'),COALESCE((SELECT MAX(id) FROM ${table}),1),(SELECT COUNT(*)>0 FROM ${table}))`);
             }
             await audit(client,req.user,'backup_restore',{ gerado_em:req.body.backup.gerado_em,checksum:req.body.backup.checksum });
         });

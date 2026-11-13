@@ -2,7 +2,7 @@
     const receipts = new Map();
     const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
     const money = value => Number(value || 0).toLocaleString('pt-BR',{ style:'currency',currency:'BRL' });
-    const titles = { entrada:'Comprovante de entrada',saida:'Comprovante de saída',mensalidade:'Pagamento de mensalidade' };
+    const titles = { entrada:'Comprovante de entrada',saida:'Comprovante de saída',mensalidade:'Pagamento de mensalidade',abertura_caixa:'Abertura de caixa',movimento_caixa:'Movimento de caixa',fechamento_caixa:'Conferência de fechamento' };
     const style = `
         .receipt,.receipt *{box-sizing:border-box}.receipt{color:#000;font:11px/1.18 Arial,sans-serif}
         .receipt{width:100%;padding:1.5mm 2mm;overflow-wrap:anywhere}.receipt h1{font-size:13px;margin:0 0 1mm;text-align:center}
@@ -14,7 +14,28 @@
         @media print{body{width:100%;-webkit-print-color-adjust:exact;print-color-adjust:exact}.receipt{padding:1mm 1.5mm}h1,h2,.line,.qr{break-inside:avoid}}`;
     function formatDate(value, tz) { return value ? new Date(value).toLocaleString('pt-BR',{ timeZone:tz || 'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit' }) : '-'; }
     const line = (label,value,cls='') => `<div class="line ${cls}"><span>${escape(label)}</span><span>${escape(value)}</span></div>`;
+    function cashHtml(receipt){
+        const company=receipt.empresa||{};let result=`<article class="receipt"><h1>${escape(company.nome||'Estacionamento')}</h1>`;
+        for(const detail of [company.documento,company.endereco,company.telefone])if(detail)result+=`<p class="center small">${escape(detail)}</p>`;
+        result+=`<h2>${titles[receipt.tipo]}</h2>`+line('Caixa principal · turno',receipt.turno_id);
+        if(receipt.responsavel)result+=line('Responsável',receipt.responsavel);
+        if(receipt.aberto_em)result+=line('Abertura',formatDate(receipt.aberto_em,receipt.fuso));
+        result+=line('Registro',formatDate(receipt.emitido_em,receipt.fuso));
+        if(receipt.tipo==='abertura_caixa')result+=line('Fundo inicial',money(receipt.fundo_inicial),'total');
+        if(receipt.tipo==='movimento_caixa')result+=line(receipt.movimento==='sangria'?'SANGRIA':'SUPRIMENTO',money(receipt.total),'total');
+        if(receipt.tipo==='fechamento_caixa'){
+            const s=receipt.resumo;result+=line('Versão',receipt.versao)+line('Fundo inicial',money(s.fundo_inicial))+line('Recebimentos',money(s.total_recebido))+line('Suprimentos / sangrias',`${money(s.suprimentos)} / ${money(s.sangrias)}`);
+            result+='<h2>Esperado / conferido / diferença</h2>';
+            for(const [key,label,expected] of [['dinheiro','Dinheiro',s.saldo_esperado],['pix','Pix',s.total_pix],['credito','Crédito',s.total_credito],['debito','Débito',s.total_debito]]){
+                result+=line(label,`${money(expected)} / ${money(receipt.contagem[key])}`)+line('Diferença',money(receipt.diferencas[key]),'small');
+            }
+            result+=line('Recebimentos / parcelas',`${s.total_transacoes} / ${s.total_parcelas}`)+line('Veículos permanecem no pátio',receipt.veiculos_no_patio)+`<p class="small">Situação no registro: ${escape(receipt.situacao)}</p>`;
+        }
+        if(receipt.observacao)result+=`<p class="small">Motivo/observação: ${escape(receipt.observacao)}</p>`;
+        return result+`<div class="footer small"><p>Operador: ${escape(receipt.operador)}</p><p>Operação: ${escape(receipt.numero)}</p></div></article>`;
+    }
     function html(receipt, qrId) {
+        if(['abertura_caixa','movimento_caixa','fechamento_caixa'].includes(receipt.tipo))return cashHtml(receipt);
         const company = receipt.empresa || {}; const tz = receipt.fuso;
         let result = `<article class="receipt"><h1>${escape(company.nome || 'Estacionamento')}</h1>`;
         for (const detail of [company.documento,company.endereco,company.telefone]) if (detail) result += `<p class="center small">${escape(detail)}</p>`;
@@ -47,6 +68,7 @@
         if (receipt.observacao) result += `<p class="small">Obs.: ${escape(receipt.observacao)}</p>`;
         result += `<div class="footer small"><p>Operador: ${escape(receipt.operador || '-')}</p><p>${receipt.tipo === 'entrada' ? 'Ticket':'Operação'}: ${escape(receipt.numero)}</p>`;
         if (receipt.ticket) result += `<p>Ticket: ${escape(receipt.ticket)}</p>`;
+        if (receipt.turno_id) result += `<p>Turno de caixa: ${escape(receipt.turno_id)}</p>`;
         return `${result}</div></article>`;
     }
     async function render(target, receipt) {

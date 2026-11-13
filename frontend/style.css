@@ -698,3 +698,9 @@ input[type="password"]{display:block;width:100%;padding:11px 12px;border:1px sol
 .print-controls label{margin:0}.print-controls select{width:auto}
 #comprovanteEntrada,#comprovantePermanencia,#comprovanteMensalidade{max-width:300px;margin:auto;color:#000;background:#fff}
 #mensalistasPopup[data-can-edit="false"] .mensalista-form,#mensalistasPopup[data-can-edit="false"] [data-edit-id]{display:none}
+.cash-count-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cash-count-grid input{display:block;width:100%}.cash-message{font-size:12px;padding:0 18px;color:#d4eee7}
+.cash-table-scroll{overflow-x:auto}.cash-table-scroll button{margin:3px;font-size:11px;white-space:nowrap}
+#comprovanteCaixa{max-width:300px;margin:auto;background:white;color:black}
+textarea{display:block;width:100%;border:1px solid #d3dfe4;border-radius:9px;padding:10px;font:inherit}
+@media(max-width:480px){.cash-count-grid{grid-template-columns:1fr}}

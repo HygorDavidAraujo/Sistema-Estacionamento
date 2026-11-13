@@ -41,17 +41,20 @@ test('API recupera 503 na mesma instância quando o banco volta, sem abrir opera
 function pgPool(pg){
     return {connect:async()=>({query:async(sql,params=[])=>params.length?pg.query(sql,params):(await pg.exec(sql)).at(-1),release(){}})};
 }
-const sqlFiles=['migrations/000-compatibility.sql','schema.sql','migrations/001-security.sql'];
+const sqlFiles=['migrations/000-compatibility.sql','schema.sql','migrations/001-security.sql','migrations/002-cash-shifts.sql'];
 const schemaSql=async()=> (await Promise.all(sqlFiles.map(file=>readFile(new URL(`../${file}`,import.meta.url),'utf8')))).join('\n');
 test('migração de banco existente preserva dados, registra versão e evita repetir DDL',async t=>{
     const pg=await PGlite.create();t.after(()=>pg.close());
     await pg.exec(await readFile(new URL('../schema.sql',import.meta.url),'utf8'));
     await pg.query("INSERT INTO historico (entry_id,placa) VALUES ('legacy-ticket','ABC1D23')");
+    await pg.exec(await readFile(new URL('../migrations/001-security.sql',import.meta.url),'utf8'));
+    await pg.exec("CREATE TABLE estacionamento_migracoes (versao TEXT PRIMARY KEY, aplicado_em TIMESTAMPTZ DEFAULT NOW()); INSERT INTO estacionamento_migracoes (versao) VALUES ('001-security'); INSERT INTO caixa_turnos (observacao_abertura) VALUES ('Legado sem caixa vinculado');");
     let loads=0;
     const initialize=createDatabaseInitializer({pool:pgPool(pg),loadSql:async()=>{loads++;return schemaSql();}});
     await initialize();await initialize();assert.equal(loads,1);
     assert.equal((await pg.query("SELECT placa FROM historico WHERE entry_id='legacy-ticket'")).rows[0].placa,'ABC1D23');
-    assert.equal((await pg.query('SELECT versao FROM estacionamento_migracoes')).rows[0].versao,schemaVersion);
+    assert.ok((await pg.query('SELECT versao FROM estacionamento_migracoes')).rows.some(row=>row.versao===schemaVersion));
+    assert.equal((await pg.query("SELECT estado FROM caixa_turnos WHERE observacao_abertura='Legado sem caixa vinculado'")).rows[0].estado,'legado');
     assert.equal((await pg.query('SELECT COUNT(*)::int AS n FROM usuarios')).rows[0].n,0);
 });
 test('falha durante migração reverte schema e marcador, permitindo tentativa completa posterior',async t=>{

@@ -25,7 +25,7 @@ Implementação local em 13/11/2026. Este documento acompanha a revisão inicial
 | Financeiro | Consulta financeira e recebimento de mensalidades |
 | Administrador | Todas as operações, tarifas, usuários e backup/restore |
 
-A vinculação dos recebimentos ao turno, fundo inicial, sangrias, suprimentos, conferência e fechamento versionado pertencem ao passo 2.
+A vinculação dos recebimentos ao turno, fundo inicial, sangrias, suprimentos, conferência e fechamento versionado foram implementados no [passo 2](PASSO_2_IMPLEMENTACAO.md).
 
 ## Comprovantes de 80 mm e 58 mm
 
@@ -91,8 +91,8 @@ Para checar somente os comprovantes: `npm run test:browser -- --grep "comprovant
 | Etapa | Estado |
 |---|---|
 | 1. Proteger acesso, cobrança e dados; compactar comprovantes | Implementada localmente; evidências e testes descritos acima |
-| 2. Estruturar caixa e turnos | Aguardando confirmação do usuário |
-| 3. Organizar contratos, mensalistas e relatórios | Aguardando a conclusão do passo 2 |
+| 2. Estruturar caixa e turnos | Implementada localmente; detalhes em PASSO_2_IMPLEMENTACAO.md |
+| 3. Organizar contratos, mensalistas e relatórios | Aguardando autorização do usuário |
 | 4. Consolidar operação, automações, recuperação e produtividade | Aguardando a conclusão do passo 3 |
 
 Backup automático, recuperação das credenciais, política de manutenção na restauração, testes com banco da hospedagem, validação física da impressão e contingência continuam como atividades da consolidação operacional. O backup atual protege e recupera os dados operacionais; o arquivo não substitui a recuperação de usuários/senhas ou uma imagem integral da instância PostgreSQL.

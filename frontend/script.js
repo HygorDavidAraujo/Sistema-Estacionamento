@@ -57,15 +57,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     StorageService.migrateLegacyEntries?.();
     bindUI();
     ReceiptService.bind();
+    CashService.bind();
     window.onSessionStarted = async () => {
         await loadConfig();
         await syncActiveEntriesFromBackend();
         await carregarDashboard();
-        if (['supervisor','financeiro','administrador'].includes(AuthService.user?.perfil)) await carregarDashboardCaixa();
-        if (AuthService.user?.perfil !== 'financeiro') await carregarTurnoAtual();
+        await CashService.refresh();
         updatePatioCarList();
     };
-    window.onSessionEnded = () => { turnoAtualCache = null; window.mensalistaEditId = null; restoreCandidate = null; };
+    window.onSessionEnded = () => { CashService.clear(); window.mensalistaEditId = null; restoreCandidate = null; };
     if (await AuthService.initialize()) await window.onSessionStarted();
     // atualiza tempos no pátio, dashboard vagas e caixa a cada 10s
     let refreshing = false;
@@ -75,9 +75,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             await syncActiveEntriesFromBackend();
             updatePatioCarList();
-            await Promise.allSettled([carregarDashboard(),
-                ['supervisor','financeiro','administrador'].includes(AuthService.user?.perfil) ? carregarDashboardCaixa() : null,
-                AuthService.user?.perfil !== 'financeiro' ? carregarTurnoAtual() : null]);
+            await Promise.allSettled([carregarDashboard(), CashService.refresh()]);
         } finally { refreshing = false; }
     }, 10000);
 });
@@ -968,8 +966,9 @@ async function registrarEntrada() {
 async function prepararPagamento(entry) {
     if (!entry) return notify('Entrada não localizada.','error');
     try {
+        const shift = await CashService.requireOwnShift();
         const { dados } = await operationRequest('/saida/cotacao',{ entryId:entry.entryId,placa:entry.placa });
-        window.dadosPagamento = { ...dados,entryId:dados.entry_id,valor:dados.valor,tempo:dados.tempo,horaEntrada:new Date(dados.entrada_em),horaSaida:new Date(dados.saida_em) };
+        window.dadosPagamento = { ...dados,turno_id:shift.id,entryId:dados.entry_id,valor:dados.valor,tempo:dados.tempo,horaEntrada:new Date(dados.entrada_em),horaSaida:new Date(dados.saida_em) };
         document.getElementById('resumoPagamento').innerHTML = `<h4>Resumo da permanência</h4><p>Placa: <strong>${escapeHtml(dados.placa)}</strong></p><p>Entrada: ${escapeHtml(new Date(dados.entrada_em).toLocaleString('pt-BR'))}</p><p>Permanência: ${escapeHtml(dados.tempo)}</p><p>Tipo: ${escapeHtml(dados.tipo)}</p><p class="valor-total">Total: ${formatCurrency(dados.valor)}</p><p class="help-text">Valor confirmado pelo servidor. Cotação válida por 2 minutos.</p>`;
         closePopup('saidaPopup');
         if (dados.valor > 0) { resetSplitUI('splitPagamentoLista','splitPagamentoTotal','splitPagamentoRestante',dados.valor); openPopup('pagamentoPopup'); }
@@ -1020,13 +1019,13 @@ async function processarSaida(pagamentos = []) {
     if (!dados || saidaBusy) return;
     saidaBusy = true; document.getElementById('confirmarPagamentoBtn').disabled = true;
     try {
-        const data = await operationRequest('/saida',{ cotacao_id:dados.cotacao_id,operacao_id:dados.operacao_id,pagamentos });
+        const data = await operationRequest('/saida',{ cotacao_id:dados.cotacao_id,operacao_id:dados.operacao_id,turno_id:dados.turno_id,pagamentos });
         StorageService.removeEntry(data.entry_id);
         await ReceiptService.render('comprovantePermanencia',data.comprovante);
         closePopup('pagamentoPopup'); openPopup('comprovantePermanenciaPopup');
         document.getElementById('placaSaida').value = '';
         updatePatioCarList(); await carregarDashboard();
-        if (['supervisor','financeiro','administrador'].includes(AuthService.user?.perfil)) await carregarDashboardCaixa();
+        await CashService.refresh();
         window.dadosPagamento = null;
     } catch (error) { notify(error.message + ' Se a conexão caiu, tente confirmar novamente a mesma operação.','error',8000); }
     finally { saidaBusy = false; document.getElementById('confirmarPagamentoBtn').disabled = false; }
@@ -1203,7 +1202,7 @@ async function importarBackup(event) {
     try{
         if(file.size>10*1024*1024)throw new Error('O limite do arquivo é 10 MB.');
         const payload=JSON.parse(await file.text());
-        if(payload.formato!=='estacionamento-operacional'||payload.versao!==1||!payload.tabelas)throw new Error('Selecione um backup operacional no formato atual.');
+        if(payload.formato!=='estacionamento-operacional'||![1,2].includes(payload.versao)||!payload.tabelas)throw new Error('Selecione um backup operacional no formato atual.');
         restoreCandidate=payload;
         document.getElementById('restoreResumo').textContent=`Arquivo com ${Object.values(payload.tabelas).reduce((n,rows)=>n+(Array.isArray(rows)?rows.length:0),0)} registros. Confira se este é o backup desejado.`;
         document.getElementById('restoreForm').reset();document.getElementById('restoreMessage').textContent='';
@@ -1426,8 +1425,9 @@ function atualizarResumoMensalidade() {
     updateSplitSummary('splitMensalidadeLista', 'splitMensalidadeTotal', 'splitMensalidadeRestante', total);
 }
 
-function abrirPagamentoMensalidade(row) {
-    window.mensalidadePagamento = {
+async function abrirPagamentoMensalidade(row) {
+    let shift;try{shift=await CashService.requireOwnShift();}catch(error){notify(error.message,'error');return;}
+    window.mensalidadePagamento = {turno_id:shift.id,
         id: row.id,
         placa: row.placa,
         nome: row.nome,
@@ -1457,11 +1457,11 @@ async function confirmarPagamentoMensalidade() {
     if (total <= 0 || !validateSplitTotal(total,pagamentos)) return notify('Confira o total e as formas de pagamento.','error');
     mensalidadeBusy = true; document.getElementById('confirmarMensalidadeBtn').disabled = true;
     try {
-        const data = await operationRequest('/mensalistas/pagamentos',{ mensalista_id:current.id,meses:Number(document.getElementById('mensalidadeMeses').value),observacao:document.getElementById('mensalidadeObservacao').value.trim(),pagamentos,operacao_id:current.operacao_id });
+        const data = await operationRequest('/mensalistas/pagamentos',{ mensalista_id:current.id,turno_id:current.turno_id,meses:Number(document.getElementById('mensalidadeMeses').value),observacao:document.getElementById('mensalidadeObservacao').value.trim(),pagamentos,operacao_id:current.operacao_id });
         await ReceiptService.render('comprovanteMensalidade',data.comprovante);
         closePopup('mensalidadePagamentoPopup'); openPopup('comprovanteMensalidadePopup');
         await carregarMensalistas();
-        if (['supervisor','financeiro','administrador'].includes(AuthService.user?.perfil)) await carregarDashboardCaixa();
+        await CashService.refresh();
         await carregarHistoricoMensalidade(current); window.mensalidadePagamento = null;
     } catch (error) { notify(error.message,'error',6000); }
     finally { mensalidadeBusy = false; document.getElementById('confirmarMensalidadeBtn').disabled = false; }
@@ -1614,332 +1614,16 @@ function buscarPorPlaca() {
 ///////////////////////////
 // dashboard caixa
 ///////////////////////////
-async function carregarDashboardCaixa() {
-    try {
-        const dados = await fetchDashboardCaixaData();
-        const { total_recebido = 0, total_dinheiro = 0, total_credito = 0, total_debito = 0, total_pix = 0, total_transacoes = 0 } = dados;
-        const isMasked = document.getElementById('caixaTotalRecebido').classList.contains('masked');
-
-        document.getElementById('caixaTotalRecebido').dataset.valor = total_recebido;
-        document.getElementById('caixaDinheiro').dataset.valor = total_dinheiro;
-        document.getElementById('caixaCredito').dataset.valor = total_credito;
-        document.getElementById('caixaDebito').dataset.valor = total_debito;
-        document.getElementById('caixaPix').dataset.valor = total_pix;
-
-        if (!isMasked) {
-            document.getElementById('caixaTotalRecebido').textContent = `R$ ${Number(total_recebido).toFixed(2)}`;
-            document.getElementById('caixaDinheiro').textContent = `R$ ${Number(total_dinheiro).toFixed(2)}`;
-            document.getElementById('caixaCredito').textContent = `R$ ${Number(total_credito).toFixed(2)}`;
-            document.getElementById('caixaDebito').textContent = `R$ ${Number(total_debito).toFixed(2)}`;
-            document.getElementById('caixaPix').textContent = `R$ ${Number(total_pix).toFixed(2)}`;
-        }
-
-        document.getElementById('caixaTransacoes').textContent = total_transacoes;
-        return dados;
-    } catch (err) {
-        console.error('[front] Erro ao carregar dashboard de caixa:', err);
-        return null;
-    }
-}
-
-function toggleCaixaValores() {
-    const elementos = document.querySelectorAll('.caixa-item .valor');
-    
-    elementos.forEach(el => {
-        if (el.id === 'caixaTransacoes') return; // Não mascara o contador de transações
-        
-        if (el.classList.contains('masked')) {
-            // Mostrar valores
-            el.classList.remove('masked');
-            const valor = parseFloat(el.dataset.valor || 0);
-            el.textContent = `R$ ${valor.toFixed(2)}`;
-        } else {
-            // Ocultar valores
-            el.classList.add('masked');
-            el.textContent = 'R$ ••••••';
-        }
-    });
-    
-    // Alterna ícone do botão
-    const btn = document.getElementById('toggleCaixaBtn');
-    const icon = btn.querySelector('.icon-eye');
-    icon.textContent = icon.textContent === '👁️' ? '🙈' : '👁️';
-}
-
-///////////////////////////
-// relatórios de caixa
-///////////////////////////
-async function fetchDashboardCaixaData() {
-    const res = await apiFetch(`${BACKEND_BASE}/caixa/dashboard`);
-    if (!res.ok) throw new Error('Erro ao carregar dashboard de caixa');
-    const data = await res.json();
-    if (!data.success || !data.dados) throw new Error('Dados de caixa indisponíveis');
-    return data.dados;
-}
-
-async function abrirFechamentoCaixa() {
-    try {
-        const dados = await fetchDashboardCaixaData();
-        const resumo = document.getElementById('fechamentoResumo');
-        if (resumo) {
-            resumo.innerHTML = `
-                <h4>Resumo do Dia</h4>
-                <p><span>Total Recebido</span><strong>R$ ${Number(dados.total_recebido || 0).toFixed(2)}</strong></p>
-                <p><span>Dinheiro</span><strong>R$ ${Number(dados.total_dinheiro || 0).toFixed(2)}</strong></p>
-                <p><span>Crédito</span><strong>R$ ${Number(dados.total_credito || 0).toFixed(2)}</strong></p>
-                <p><span>Débito</span><strong>R$ ${Number(dados.total_debito || 0).toFixed(2)}</strong></p>
-                <p><span>Pix</span><strong>R$ ${Number(dados.total_pix || 0).toFixed(2)}</strong></p>
-                <p><span>Transações</span><strong>${Number(dados.total_transacoes || 0)}</strong></p>
-            `;
-        }
-        const forceEl = document.getElementById('fechamentoForce');
-        if (forceEl) forceEl.checked = false;
-        openPopup('fechamentoCaixaPopup');
-    } catch (err) {
-        console.error('[front] erro ao abrir fechamento:', err);
-        notify('Falha ao carregar resumo do caixa.', 'error');
-    }
-}
-
-async function confirmarFechamentoCaixa() {
-    const observacao = document.getElementById('fechamentoObservacao')?.value?.trim() || '';
-    const force = Boolean(document.getElementById('fechamentoForce')?.checked);
-    if (force && !observacao) {
-        notify('Informe uma observação para fechamento forçado.', 'error');
-        return;
-    }
-    if (force && !confirm('Confirma o fechamento forçado? Esta ação sobrescreve o fechamento existente.')) {
-        return;
-    }
-    try {
-        const res = await apiFetch(`${BACKEND_BASE}/caixa/fechamento`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ observacao, force })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) {
-            const msg = data.error || data.mensagem || 'Erro ao fechar caixa';
-            if (res.status === 409) {
-                notify('Fechamento já existe para hoje. Use o admin para forçar, se necessário.', 'error');
-            } else {
-                notify(msg, 'error');
-            }
-            return;
-        }
-        closePopup('fechamentoCaixaPopup');
-        document.getElementById('fechamentoObservacao').value = '';
-        const forceEl = document.getElementById('fechamentoForce');
-        if (forceEl) forceEl.checked = false;
-        notify('Caixa fechado com sucesso.', 'success');
-    } catch (err) {
-        console.error('[front] erro ao fechar caixa:', err);
-        notify('Falha ao fechar caixa.', 'error');
-    }
-}
-
-///////////////////////////
-// histórico de fechamentos
-///////////////////////////
-async function abrirHistoricoFechamentos() {
-    await carregarHistoricoFechamentos();
-    openPopup('fechamentosHistoricoPopup');
-}
-
-async function carregarHistoricoFechamentos() {
-    const dataInicio = document.getElementById('dataInicioFechamentos')?.value || '';
-    const dataFim = document.getElementById('dataFimFechamentos')?.value || '';
-    const params = new URLSearchParams();
-    if (dataInicio) params.append('dataInicio', dataInicio);
-    if (dataFim) params.append('dataFim', dataFim);
-
-    const container = document.getElementById('fechamentosConteudo');
-    if (!container) return;
-    container.innerHTML = '<p>Carregando...</p>';
-
-    try {
-        const res = await apiFetch(`${BACKEND_BASE}/caixa/fechamentos?${params.toString()}`);
-        if (!res.ok) throw new Error('Erro ao buscar fechamentos');
-        const data = await res.json();
-        if (!data.success) throw new Error('Dados indisponíveis');
-        renderHistoricoFechamentos(data.dados || []);
-    } catch (err) {
-        console.error('[front] erro ao carregar fechamentos:', err);
-        container.innerHTML = '<p>Não foi possível carregar o histórico.</p>';
-    }
-}
-
-function renderHistoricoFechamentos(dados) {
-    const container = document.getElementById('fechamentosConteudo');
-    if (!container) return;
-    if (!dados.length) {
-        container.innerHTML = '<p>Nenhum fechamento encontrado.</p>';
-        return;
-    }
-
-    const rows = dados.map(item => `
-        <tr>
-            <td>${formatBrDate(item.data_ref)}</td>
-            <td>${formatCurrency(item.total_recebido)}</td>
-            <td>${formatCurrency(item.total_dinheiro)}</td>
-            <td>${formatCurrency(item.total_credito)}</td>
-            <td>${formatCurrency(item.total_debito)}</td>
-            <td>${formatCurrency(item.total_pix)}</td>
-            <td>${Number(item.total_transacoes || 0)}</td>
-            <td>${escapeHtml(item.observacao || '-')}</td>
-            <td>${formatDateTimeBr(item.criado_em)}</td>
-        </tr>
-    `).join('');
-
-    container.innerHTML = `
-        <table>
-            <thead>
-                <tr>
-                    <th>Data</th>
-                    <th>Total</th>
-                    <th>Dinheiro</th>
-                    <th>Crédito</th>
-                    <th>Débito</th>
-                    <th>Pix</th>
-                    <th>Transações</th>
-                    <th>Observação</th>
-                    <th>Criado em</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${rows}
-            </tbody>
-        </table>
-    `;
-}
-
-///////////////////////////
-// turnos de caixa
-///////////////////////////
-let turnoAtualCache = null;
-
-async function carregarTurnoAtual() {
-    try {
-        const res = await apiFetch(`${BACKEND_BASE}/caixa/turnos/atual`);
-        if (!res.ok) throw new Error('Erro ao buscar turno atual');
-        const data = await res.json();
-        turnoAtualCache = data?.dados || null;
-        renderTurnoStatus(turnoAtualCache);
-    } catch (err) {
-        console.error('[front] erro ao carregar turno atual:', err);
-        renderTurnoStatus(null, true);
-    }
-}
-
-function renderTurnoStatus(turno, erro = false) {
-    const statusEl = document.getElementById('turnoStatus');
-    const inicioEl = document.getElementById('turnoInicio');
-    if (!statusEl || !inicioEl) return;
-
-    if (erro) {
-        statusEl.textContent = 'Indisponível';
-        inicioEl.textContent = 'Falha ao carregar turno';
-        return;
-    }
-
-    if (!turno) {
-        statusEl.textContent = 'Fechado';
-        inicioEl.textContent = 'Sem turno aberto';
-        return;
-    }
-
-    statusEl.textContent = 'Aberto';
-    inicioEl.textContent = `Iniciado: ${formatDateTimeBr(turno.aberto_em)}`;
-}
-
-async function abrirTurnoCaixa() {
-    await carregarTurnoAtual();
-    renderTurnoPopup();
-    openPopup('turnoCaixaPopup');
-}
-
-function renderTurnoPopup() {
-    const resumo = document.getElementById('turnoResumo');
-    const abrirBtn = document.getElementById('confirmarAberturaTurnoBtn');
-    const fecharBtn = document.getElementById('confirmarFechamentoTurnoBtn');
-
-    if (!resumo || !abrirBtn || !fecharBtn) return;
-
-    if (turnoAtualCache) {
-        resumo.innerHTML = `
-            <h4>Turno Aberto</h4>
-            <p><span>Início</span><strong>${formatDateTimeBr(turnoAtualCache.aberto_em)}</strong></p>
-            <p><span>Data Ref</span><strong>${formatBrDate(turnoAtualCache.data_ref)}</strong></p>
-        `;
-        abrirBtn.disabled = true;
-        fecharBtn.disabled = false;
-    } else {
-        resumo.innerHTML = `
-            <h4>Turno Fechado</h4>
-            <p>Nenhum turno aberto no momento.</p>
-        `;
-        abrirBtn.disabled = false;
-        fecharBtn.disabled = true;
-    }
-}
-
-async function confirmarAberturaTurno() {
-    const observacao = document.getElementById('turnoObservacao')?.value?.trim() || '';
-    if (turnoAtualCache) {
-        notify('Já existe um turno aberto.', 'error');
-        return;
-    }
-
-    try {
-        const res = await apiFetch(`${BACKEND_BASE}/caixa/turnos/abrir`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ observacao })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) {
-            notify(data.error || 'Erro ao abrir turno', 'error');
-            return;
-        }
-        document.getElementById('turnoObservacao').value = '';
-        await carregarTurnoAtual();
-        renderTurnoPopup();
-        notify('Turno aberto com sucesso.', 'success');
-    } catch (err) {
-        console.error('[front] erro ao abrir turno:', err);
-        notify('Falha ao abrir turno.', 'error');
-    }
-}
-
-async function confirmarFechamentoTurno() {
-    const observacao = document.getElementById('turnoObservacao')?.value?.trim() || '';
-    if (!turnoAtualCache) {
-        notify('Nenhum turno aberto para fechar.', 'error');
-        return;
-    }
-    if (!confirm('Confirma o fechamento do turno atual?')) return;
-
-    try {
-        const res = await apiFetch(`${BACKEND_BASE}/caixa/turnos/fechar`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ turno_id: turnoAtualCache.id, observacao })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) {
-            notify(data.error || 'Erro ao fechar turno', 'error');
-            return;
-        }
-        document.getElementById('turnoObservacao').value = '';
-        closePopup('turnoCaixaPopup');
-        await carregarTurnoAtual();
-        notify('Turno fechado com sucesso.', 'success');
-    } catch (err) {
-        console.error('[front] erro ao fechar turno:', err);
-        notify('Falha ao fechar turno.', 'error');
-    }
-}
-
+async function carregarDashboardCaixa(){return CashService.refresh();}
+function toggleCaixaValores(){return CashService.toggle();}
+async function abrirFechamentoCaixa(){return CashService.openClose();}
+async function confirmarFechamentoCaixa(){return CashService.closeShift();}
+async function abrirHistoricoFechamentos(){return CashService.openHistory();}
+async function carregarHistoricoFechamentos(){return CashService.history();}
+async function carregarTurnoAtual(){return CashService.refresh();}
+async function abrirTurnoCaixa(){return CashService.open();}
+async function confirmarAberturaTurno(){return CashService.openShift();}
+async function confirmarFechamentoTurno(){return CashService.openClose();}
 function normalizeFormaPagamento(value) {
     if (!value) return null;
     const raw = String(value).trim();

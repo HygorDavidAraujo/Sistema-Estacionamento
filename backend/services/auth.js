@@ -142,6 +142,7 @@ export function createAuth({ query, tx, ready, env, setupToken }) {
             const user = profile({ ...old, ...req.body, login: old.login });
             const active = req.body.ativo ?? old.ativo;
             if (typeof active !== 'boolean') fail('Status inválido');
+            if(!active&&(await client.query("SELECT id FROM caixa_turnos WHERE operador_id=$1 AND estado='aberto'",[old.id])).rows.length)fail('Encerre o turno de caixa deste usuário antes de desativá-lo',409);
             if (old.perfil === 'administrador' && old.ativo && (user.perfil !== 'administrador' || !active)) {
                 if ((await client.query("SELECT id FROM usuarios WHERE perfil='administrador' AND ativo=true AND id<>$1", [old.id])).rows.length === 0) fail('Mantenha pelo menos um administrador ativo', 409);
             }

@@ -34,11 +34,11 @@
         const permissions = {
             btnEntrada: ['operador','supervisor','administrador'], btnSaida: ['operador','supervisor','administrador'],
             btnMenu: ['administrador'], btnUsuarios: ['administrador'], btnMinhaSenha: Object.keys(roles),
-            btnFecharCaixa: ['supervisor','administrador'], btnTurnoCaixa: ['operador','supervisor','administrador'],
+            btnFecharCaixa: Object.keys(roles), btnTurnoCaixa: Object.keys(roles),
             btnBackupImport: ['administrador'], btnBackupExport: ['administrador']
         };
         for (const [id, allowed] of Object.entries(permissions)) if (el(id)) el(id).hidden = !allowed.includes(role);
-        if (el('caixaSidebar')) el('caixaSidebar').hidden = !['supervisor','financeiro','administrador'].includes(role);
+        if (el('caixaSidebar')) el('caixaSidebar').hidden = !user;
         for (const id of ['btnNovoMensalista','btnSalvarMensalista','btnLimparMensalista']) if (el(id)) el(id).hidden = !['supervisor','administrador'].includes(role);
         if (el('mensalistasPopup')) el('mensalistasPopup').dataset.canEdit = String(['supervisor','administrador'].includes(role));
         document.querySelectorAll('.btn-cancel-card').forEach(button => { button.hidden = !['supervisor','administrador'].includes(role); });
@@ -54,6 +54,8 @@
         });
         window.dadosPagamento = null; window.mensalidadePagamento = null;
         window.ReceiptService?.clear();
+        window.CashService?.clear();
+        if(el('comprovanteCaixa'))el('comprovanteCaixa').replaceChildren();
         window.PlateCamera?.close();
         document.querySelectorAll('.popup').forEach(popup => popup.setAttribute('aria-hidden','true'));
         document.querySelectorAll('.caixa-item .valor').forEach(node => { node.textContent = node.id === 'caixaTransacoes' ? '0' : 'R$ ••••••'; node.dataset.valor = '0'; });

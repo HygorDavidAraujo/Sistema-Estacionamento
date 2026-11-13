@@ -18,6 +18,11 @@ test.beforeEach(async ({ page }) => {
     await page.fill('#authSenha','Senha-teste-123');
     await page.click('#authSubmit');
     await expect(page.locator('#connectionStatus')).toHaveText('Sincronizado');
+    await page.evaluate(async()=>{
+        const current=await (await apiFetch(`${BACKEND_BASE}/caixa/turnos/atual`)).json();
+        if(!current.dados)await operationRequest('/caixa/turnos/abrir',{operacao_id:crypto.randomUUID(),fundo_inicial:0});
+        await CashService.refresh();
+    });
 });
 
 test('consulta preenche os três campos e mantém dados do veículo atual', async ({ page }) => {
@@ -253,4 +258,45 @@ test('tela de acesso recupera indisponibilidade temporária sem reiniciar o nave
     await page.fill('#authLogin','teste');await page.fill('#authSenha','Senha-teste-123');await page.click('#authSubmit');
     await expect(page.locator('body')).toHaveAttribute('data-session','active');
     await expect(page.locator('#connectionStatus')).toHaveText('Sincronizado');
+});
+
+test('caixa pela interface: fundo, suprimento, sangria, diferença, aprovação e nova versão',async({page})=>{
+    // Encerra a preparação compartilhada dos testes anteriores pelo protocolo normal da API.
+    await page.evaluate(async()=>{
+        const result=await(await apiFetch(`${BACKEND_BASE}/caixa/turnos/atual`)).json();const id=result.dados?.id;
+        if(id){const s=(await(await apiFetch(`${BACKEND_BASE}/caixa/turnos/${id}/resumo`)).json()).dados.resumo;
+            await operationRequest('/caixa/turnos/fechar',{operacao_id:crypto.randomUUID(),turno_id:id,revisao:s.revisao,contagem:{dinheiro:s.saldo_esperado,credito:s.total_credito,debito:s.total_debito,pix:s.total_pix}});}
+        await CashService.refresh();
+    });
+    await page.click('#btnTurnoCaixa');await page.fill('#turnoFundoInicial','100');await page.fill('#turnoObservacao','Troco para início de atendimento');await page.click('#confirmarAberturaTurnoBtn');
+    await expect(page.locator('#comprovanteCaixaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteCaixa')).toContainText('100,00');
+    await page.locator('#comprovanteCaixaPopup [data-close]').click();
+    const id=await page.evaluate(async()=> (await(await apiFetch(`${BACKEND_BASE}/caixa/turnos/atual`)).json()).dados.id);
+    for(const [type,value]of [['suprimento','20'],['sangria','10']]){
+        await page.click('#btnMovimentarCaixa');await page.selectOption('#movimentoTipo',type);await page.fill('#movimentoValor',value);await page.fill('#movimentoMotivo','Movimento autorizado para teste');await page.click('#registrarMovimentoCaixaBtn');
+        await expect(page.locator('#comprovanteCaixaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteCaixa')).toContainText(type.toUpperCase());await page.locator('#comprovanteCaixaPopup [data-close]').click();
+    }
+    await page.click('#btnEntrada');await page.fill('#placaEntrada','MNO2P34');await expect(page.locator('#modeloEntrada')).not.toHaveValue('');await page.click('#registrarBtn');
+    await expect(page.locator('#comprovanteEntradaPopup')).toHaveAttribute('aria-hidden','false');await page.locator('#comprovanteEntradaPopup [data-close]').click();
+    await page.click('#btnFecharCaixa');await expect(page.locator('#fechamentoResumo')).toContainText('110,00');
+    await page.fill('#contagemDinheiro','109');for(const suffix of ['Pix','Credito','Debito'])await page.fill(`#contagem${suffix}`,'0');
+    await page.fill('#fechamentoObservacao','Diferença identificada na contagem física');await page.click('#confirmarFechamentoBtn');
+    await expect(page.locator('#comprovanteCaixaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteCaixa')).toContainText('Aguardando aprovação');await page.locator('#comprovanteCaixaPopup [data-close]').click();
+    await expect(page.locator('#patioCarList')).toContainText('MNO2P34');await expect(page.locator('#cashMessage')).toContainText('aguardam aprovação');
+    await page.click('#btnHistoricoFechamentos');await page.locator('[data-cash-action="approve"]').click();await page.fill('#cashDecisionMotivo','Diferença analisada pelo responsável');await page.click('#cashDecisionConfirm');
+    await expect(page.locator('#fechamentosHistoricoPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('[data-cash-action="approve"]')).toHaveCount(0);
+    await page.locator(`[data-cash-action="reopen"][data-id="${id}"]`).click();await page.fill('#cashDecisionMotivo','Recontagem autorizada para corrigir conferência');await page.click('#cashDecisionConfirm');
+    await expect(page.locator('#fechamentosHistoricoPopup')).toHaveAttribute('aria-hidden','false');await page.locator('#fechamentosHistoricoPopup [data-close]').click();
+    await page.click('#btnFecharCaixa');await page.fill('#contagemDinheiro','110');for(const suffix of ['Pix','Credito','Debito'])await page.fill(`#contagem${suffix}`,'0');await page.click('#confirmarFechamentoBtn');
+    await expect(page.locator('#comprovanteCaixaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteCaixa')).toContainText('Conferido sem diferença');
+    const versions=await page.evaluate(async id=>(await(await apiFetch(`${BACKEND_BASE}/caixa/turnos/${id}/resumo`)).json()).dados.conferencias,id);
+    expect(versions.length).toBe(2);expect(versions[0].versao).toBe(2);expect(versions[1].diferencas.dinheiro).toBe(-1);expect(versions[1].substituida_em).toBeTruthy();
+    await page.evaluate(()=>{const open=window.open.bind(window);window.open=(...args)=>{const child=open(...args);if(child)child.print=()=>{child.__printed=true;};return child;};});
+    for(const width of ['80','58']){
+        await page.selectOption('#printCaixaWidth',width);const pending=page.waitForEvent('popup');await page.locator('[data-receipt-print="comprovanteCaixa"]').click();const popup=await pending;await popup.waitForFunction(()=>window.__printed);
+        await expect(popup.locator('body')).toContainText('Dinheiro');await expect(popup.locator('body')).toContainText('110,00');
+        const overflow=await popup.evaluate(()=>{const el=document.querySelector('.receipt');return el.scrollWidth>Math.ceil(el.getBoundingClientRect().width);});expect(overflow).toBe(false);
+        await popup.evaluate(()=>{window.onafterprint=null;});const pdf=await popup.pdf({path:`../artifacts/fechamento-caixa-${width}mm.pdf`,preferCSSPageSize:true});expect((pdf.toString('latin1').match(/\/Type \/Page\b/g)||[]).length).toBe(1);
+        await popup.screenshot({path:`../artifacts/fechamento-caixa-${width}mm.png`,fullPage:true});await popup.close();
+    }
 });

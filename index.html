@@ -100,13 +100,13 @@
     <!-- SIDEBAR CAIXA -->
     <aside id="caixaSidebar">
         <div class="caixa-header">
-            <h2>💰 Caixa do Dia</h2>
+            <h2>Caixa do turno</h2>
             <button id="toggleCaixaBtn" class="btn-toggle">
                 <span class="icon-eye">👁️</span>
             </button>
         </div>
         
-        <div class="caixa-content">
+        <div class="caixa-content" id="caixaContent">
             <div class="caixa-item total-recebido">
                 <span class="label">Total Recebido</span>
                 <span class="valor" id="caixaTotalRecebido" data-valor="0">R$ ••••••</span>
@@ -137,10 +137,16 @@
             <div class="caixa-divider"></div>
             
             <div class="caixa-item">
-                <span class="label">Transações</span>
+                <span class="label">Recebimentos</span>
                 <span class="valor" id="caixaTransacoes">0</span>
             </div>
+            <div class="caixa-item"><span class="label">Fundo inicial</span><span class="valor" id="caixaFundo">R$ ••••••</span></div>
+            <div class="caixa-item"><span class="label">Suprimentos</span><span class="valor" id="caixaSuprimentos">R$ ••••••</span></div>
+            <div class="caixa-item"><span class="label">Sangrias</span><span class="valor" id="caixaSangrias">R$ ••••••</span></div>
+            <div class="caixa-item"><span class="label">Esperado na gaveta</span><span class="valor" id="caixaSaldoEsperado">R$ ••••••</span></div>
         </div>
+        <p id="cashMessage" class="cash-message" role="status"></p>
+        <button id="btnMovimentarCaixa" class="btn-ghost" type="button">Sangria / suprimento</button>
         <div class="caixa-turno">
             <div class="turno-info">
                 <span class="label">Turno Atual</span>
@@ -321,12 +327,18 @@
 <div class="popup" role="dialog" aria-modal="true" id="fechamentoCaixaPopup" aria-hidden="true">
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
-        <h3>Fechamento de Caixa</h3>
+        <h3>Conferir e fechar turno</h3>
         <div id="fechamentoResumo" class="resumo-pagamento"></div>
-        <label for="fechamentoObservacao">Observação</label>
-        <input id="fechamentoObservacao" type="text" />
-        <label class="checkbox-item"><input id="fechamentoForce" type="checkbox" /> Forçar fechamento (sobrescrever existente)</label>
-        <p class="help-text">Use apenas com autorização. A ação será registrada em auditoria.</p>
+        <p class="help-text">Conte o dinheiro na gaveta, incluindo o fundo inicial, e confira os totais na maquininha e no Pix. Informe zero quando não houver valor.</p>
+        <div class="cash-count-grid">
+            <label>Dinheiro contado<input id="contagemDinheiro" type="number" min="0" step="0.01" /></label>
+            <label>Pix conferido<input id="contagemPix" type="number" min="0" step="0.01" /></label>
+            <label>Crédito conferido<input id="contagemCredito" type="number" min="0" step="0.01" /></label>
+            <label>Débito conferido<input id="contagemDebito" type="number" min="0" step="0.01" /></label>
+        </div>
+        <label for="fechamentoObservacao">Justificativa (obrigatória se houver diferença ou fechamento por outro responsável)</label>
+        <textarea id="fechamentoObservacao" maxlength="255" rows="2"></textarea>
+        <button id="btnAtualizarConferencia" type="button" class="btn-ghost">Atualizar resumo</button>
         <div class="inline-actions">
             <button id="confirmarFechamentoBtn" class="btn-primary" type="button">Confirmar Fechamento</button>
             <button id="cancelarFechamentoBtn" class="btn-ghost" type="button">Cancelar</button>
@@ -340,12 +352,32 @@
         <button class="close" data-close>&times;</button>
         <h3>Turno de Caixa</h3>
         <div id="turnoResumo" class="resumo-pagamento"></div>
-        <label for="turnoObservacao">Observação</label>
-        <input id="turnoObservacao" type="text" />
+        <div id="turnoAberturaFields"><label for="turnoFundoInicial">Fundo inicial em dinheiro (troco)</label><input id="turnoFundoInicial" type="number" min="0" step="0.01" value="0.00" />
+        <label for="turnoObservacao">Observação da abertura</label><input id="turnoObservacao" type="text" maxlength="255" /></div>
         <div class="inline-actions">
             <button id="confirmarAberturaTurnoBtn" class="btn-primary" type="button">Abrir Turno</button>
-            <button id="confirmarFechamentoTurnoBtn" class="btn-ghost" type="button">Fechar Turno</button>
+            <button id="confirmarFechamentoTurnoBtn" class="btn-ghost" type="button">Conferir fechamento</button>
         </div>
+    </div>
+</div>
+
+<div class="popup" role="dialog" aria-modal="true" id="movimentoCaixaPopup" aria-hidden="true">
+    <div class="popup-content"><button class="close" data-close aria-label="Fechar">&times;</button><h3>Movimentação de dinheiro</h3>
+        <label for="movimentoTipo">Tipo</label><select id="movimentoTipo"><option value="sangria">Sangria — retirar para o cofre</option><option value="suprimento">Suprimento — adicionar troco</option></select>
+        <label for="movimentoValor">Valor em dinheiro</label><input id="movimentoValor" type="number" min="0.01" step="0.01" />
+        <label for="movimentoMotivo">Motivo (10 a 255 caracteres)</label><textarea id="movimentoMotivo" maxlength="255" rows="3"></textarea>
+        <button id="registrarMovimentoCaixaBtn" type="button">Registrar e emitir comprovante</button>
+    </div>
+</div>
+<div class="popup" role="dialog" aria-modal="true" id="cashDecisionPopup" aria-hidden="true">
+    <div class="popup-content"><button class="close" data-close aria-label="Fechar">&times;</button><h3 id="cashDecisionTitle">Conferência do caixa</h3>
+        <p>A ação e o responsável serão registrados no histórico.</p><label for="cashDecisionMotivo">Justificativa (10 a 255 caracteres)</label><textarea id="cashDecisionMotivo" rows="3" maxlength="255"></textarea>
+        <button id="cashDecisionConfirm" type="button">Confirmar com justificativa</button>
+    </div>
+</div>
+<div class="popup" role="dialog" aria-modal="true" id="comprovanteCaixaPopup" aria-hidden="true">
+    <div class="popup-content"><button class="close" data-close aria-label="Fechar">&times;</button><div id="comprovanteCaixa"></div>
+        <div class="print-controls"><label for="printCaixaWidth">Papel</label><select id="printCaixaWidth" class="receipt-width"><option value="80">80 mm</option><option value="58">58 mm</option></select><button data-receipt-print="comprovanteCaixa">Imprimir</button></div>
     </div>
 </div>
 
@@ -595,6 +627,7 @@
 <script src="frontend/js/storage.service.js"></script>
 <script src="frontend/js/auth.service.js"></script>
 <script src="frontend/js/receipt.service.js"></script>
+<script src="frontend/js/cash.service.js"></script>
 
 <script src="frontend/script.js"></script>
 </body>

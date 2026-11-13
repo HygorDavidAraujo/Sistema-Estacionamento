@@ -15,6 +15,7 @@ import { createOperationsRouter } from './routes/operations.js';
 import { createBackupRouter } from './routes/backup.js';
 import { OperationError, audit, cents, fail } from './services/financial-domain.js';
 import { createDatabaseReadiness, initializationFailure } from './services/database-readiness.js';
+import { createCashRouter } from './routes/cash.js';
 
 export function createApp({ db, env = process.env, setupToken = env.AUTH_SETUP_TOKEN || env.ADMIN_TOKEN || '', clock, plateFetch, readinessOptions = {} } = {}) {
 const { initDb, query, tx } = db;
@@ -190,16 +191,17 @@ app.use((req,_res,next) => requestIdentity.run(req.user,next));
 app.use((req,res,next) => {
     const path = req.path.toLowerCase().replace(/\/+$/, '');
     if (/^\/auditoria(?:\/|$)/.test(path)) return allow('supervisor','administrador')(req,res,next);
-    if (/^\/relatorio(?:\/|$)/.test(path) || /^\/caixa\/(dashboard|relatorio|fechamentos)(?:\/|$)/.test(path)) return allow('supervisor','financeiro','administrador')(req,res,next);
+    if (/^\/relatorio(?:\/|$)/.test(path) || /^\/caixa\/relatorio(?:\/|$)/.test(path)) return allow('supervisor','financeiro','administrador')(req,res,next);
     if (req.method !== 'GET') {
         if (path === '/configuracoes') return allow('administrador')(req,res,next);
-        if (path === '/patio/cancel' || path === '/caixa/fechamento') return allow('supervisor','administrador')(req,res,next);
+        if (path === '/patio/cancel') return allow('supervisor','administrador')(req,res,next);
         if (/^\/mensalistas(?:\/|$)/.test(path) && path !== '/mensalistas/pagamentos') return allow('supervisor','administrador')(req,res,next);
-        if (/^\/caixa\/turnos/.test(path)) return allow('operador','supervisor','administrador')(req,res,next);
+        if (/^\/caixa\/turnos/.test(path)) return allow('operador','financeiro','supervisor','administrador')(req,res,next);
     }
     next();
 });
 
+app.use(createCashRouter({query,tx,allow,timeZone:APP_TIMEZONE,clock}));
 app.use(createOperationsRouter({ query, tx, allow, timeZone: APP_TIMEZONE, clock }));
 app.use(createBackupRouter({ tx, allow }));
 
@@ -456,25 +458,6 @@ app.get("/api/relatorio/resumo", async (req, res) => {
     return app.handle(req, res);
 });
 
-// ROTA PARA OBTER DASHBOARD DE CAIXA
-app.get("/caixa/dashboard", async (req, res) => {
-    const hoje = formatDateLocal(new Date());
-
-    try {
-        await ensureDatabase();
-        const dados = await getCaixaResumoPorData(hoje);
-        res.json({ success: true, dados });
-    } catch (err) {
-        console.error("[BACK] Erro ao gerar dashboard de caixa:", err);
-        return res.status(500).json({ error: "Erro ao gerar dashboard de caixa" });
-    }
-});
-
-app.get("/api/caixa/dashboard", async (req, res) => {
-    req.url = '/caixa/dashboard';
-    return app.handle(req, res);
-});
-
 // ROTA PARA RELATÓRIO DE CAIXA POR PERÍODO
 app.get("/caixa/relatorio", async (req, res) => {
     const dataInicio = normalizeDateParam(req.query.dataInicio);
@@ -531,234 +514,6 @@ app.get("/api/caixa/relatorio", async (req, res) => {
     req.url = '/caixa/relatorio';
     return app.handle(req, res);
 });
-// FECHAMENTO DE CAIXA
-app.post("/caixa/fechamento", requireAuth, async (req, res) => {
-    const data_ref = normalizeDateParam(req.body?.data_ref) || formatDateLocal(new Date());
-    const observacao = String(req.body?.observacao || '').trim() || null;
-    const force = req.body?.force === true;
-    if (force && observacao?.length < 10 || force && !observacao) return res.status(400).json({ error: 'Informe justificativa de ao menos 10 caracteres' });
-
-    try {
-        await ensureDatabase();
-
-        const existente = await query(`SELECT id FROM caixa_fechamentos WHERE data_ref = $1`, [data_ref]);
-        if (existente.rows?.[0] && !force) {
-            return res.status(409).json({ error: 'Fechamento já existe para esta data' });
-        }
-
-        const resumo = await getCaixaResumoPorData(data_ref);
-        const payload = {
-            total_recebido: Number(resumo.total_recebido || 0),
-            total_dinheiro: Number(resumo.total_dinheiro || 0),
-            total_credito: Number(resumo.total_credito || 0),
-            total_debito: Number(resumo.total_debito || 0),
-            total_pix: Number(resumo.total_pix || 0),
-            total_transacoes: Number(resumo.total_transacoes || 0)
-        };
-
-        if (existente.rows?.[0]) {
-            await query(`UPDATE caixa_fechamentos
-                 SET total_recebido = $1, total_dinheiro = $2, total_credito = $3, total_debito = $4, total_pix = $5, total_transacoes = $6, observacao = $7
-                 WHERE data_ref = $8`,
-                [payload.total_recebido, payload.total_dinheiro, payload.total_credito, payload.total_debito, payload.total_pix, payload.total_transacoes, observacao, data_ref]
-            );
-        } else {
-            await query(`INSERT INTO caixa_fechamentos (data_ref, total_recebido, total_dinheiro, total_credito, total_debito, total_pix, total_transacoes, observacao)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                [data_ref, payload.total_recebido, payload.total_dinheiro, payload.total_credito, payload.total_debito, payload.total_pix, payload.total_transacoes, observacao]
-            );
-        }
-
-        await logAudit('caixa_fechamento', { data_ref, ...payload, force });
-
-        return res.json({ success: true, dados: { data_ref, observacao, ...payload } });
-    } catch (err) {
-        console.error('[BACK] Erro ao fechar caixa:', err);
-        return res.status(500).json({ error: 'Erro ao fechar caixa' });
-    }
-});
-
-app.get("/caixa/fechamentos", requireAuth, async (req, res) => {
-    const dataInicio = normalizeDateParam(req.query.dataInicio);
-    const dataFim = normalizeDateParam(req.query.dataFim);
-
-    let sql = `SELECT
-        id,
-        TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref,
-        total_recebido,
-        total_dinheiro,
-        total_credito,
-        total_debito,
-        total_pix,
-        total_transacoes,
-        observacao,
-        criado_em
-     FROM caixa_fechamentos WHERE 1=1`;
-    const params = [];
-
-    if (dataInicio) {
-        params.push(dataInicio);
-        sql += ` AND data_ref >= $${params.length}`;
-    }
-    if (dataFim) {
-        params.push(dataFim);
-        sql += ` AND data_ref <= $${params.length}`;
-    }
-
-    sql += ` ORDER BY data_ref DESC`;
-
-    try {
-        await ensureDatabase();
-        const result = await query(sql, params);
-        res.json({ success: true, dados: result.rows || [] });
-    } catch (err) {
-        console.error('[BACK] Erro ao listar fechamentos:', err);
-        return res.status(500).json({ error: 'Erro ao listar fechamentos' });
-    }
-});
-
-// TURNOS DE CAIXA
-app.get("/caixa/turnos/atual", requireAuth, async (req, res) => {
-    try {
-        await ensureDatabase();
-        const result = await query(
-            `SELECT
-                id,
-                TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref,
-                aberto_em,
-                fechado_em,
-                observacao_abertura,
-                observacao_fechamento
-             FROM caixa_turnos
-             WHERE fechado_em IS NULL
-             ORDER BY aberto_em DESC
-             LIMIT 1`
-        );
-        return res.json({ success: true, dados: result.rows?.[0] || null });
-    } catch (err) {
-        console.error('[BACK] Erro ao buscar turno atual:', err);
-        return res.status(500).json({ error: 'Erro ao buscar turno atual' });
-    }
-});
-
-app.post("/caixa/turnos/abrir", requireAuth, async (req, res) => {
-    const observacao = String(req.body?.observacao || '').trim() || null;
-    const data_ref = normalizeDateParam(req.body?.data_ref) || formatDateLocal(new Date());
-
-    try {
-        await ensureDatabase();
-        const aberto = await query(
-            `SELECT id FROM caixa_turnos WHERE fechado_em IS NULL ORDER BY aberto_em DESC LIMIT 1`
-        );
-        if (aberto.rows?.[0]) {
-            return res.status(409).json({ error: 'Já existe um turno aberto' });
-        }
-
-        const insert = await query(
-            `INSERT INTO caixa_turnos (data_ref, aberto_em, observacao_abertura)
-             VALUES ($1, NOW(), $2)
-             RETURNING id, TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref, aberto_em, observacao_abertura`,
-            [data_ref, observacao]
-        );
-
-        await logAudit('caixa_turno_abertura', { id: insert.rows?.[0]?.id, data_ref, observacao });
-
-        return res.json({ success: true, dados: insert.rows?.[0] || null });
-    } catch (err) {
-        console.error('[BACK] Erro ao abrir turno:', err);
-        return res.status(500).json({ error: 'Erro ao abrir turno' });
-    }
-});
-
-app.post("/caixa/turnos/fechar", requireAuth, async (req, res) => {
-    const observacao = String(req.body?.observacao || '').trim() || null;
-    const turnoId = req.body?.turno_id ? Number(req.body.turno_id) : null;
-
-    try {
-        await ensureDatabase();
-        let turno;
-        if (turnoId) {
-            const result = await query(
-                `SELECT id, data_ref, aberto_em, fechado_em FROM caixa_turnos WHERE id = $1`,
-                [turnoId]
-            );
-            turno = result.rows?.[0];
-        } else {
-            const result = await query(
-                `SELECT id, data_ref, aberto_em, fechado_em FROM caixa_turnos WHERE fechado_em IS NULL ORDER BY aberto_em DESC LIMIT 1`
-            );
-            turno = result.rows?.[0];
-        }
-
-        if (!turno) {
-            return res.status(409).json({ error: 'Nenhum turno aberto para fechar' });
-        }
-        if (turno.fechado_em) {
-            return res.status(409).json({ error: 'Turno já está fechado' });
-        }
-
-        await query(
-            `UPDATE caixa_turnos SET fechado_em = NOW(), observacao_fechamento = $1 WHERE id = $2`,
-            [observacao, turno.id]
-        );
-
-        const updated = await query(
-            `SELECT
-                id,
-                TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref,
-                aberto_em,
-                fechado_em,
-                observacao_abertura,
-                observacao_fechamento
-             FROM caixa_turnos WHERE id = $1`,
-            [turno.id]
-        );
-
-        await logAudit('caixa_turno_fechamento', { id: turno.id, observacao });
-
-        return res.json({ success: true, dados: updated.rows?.[0] || null });
-    } catch (err) {
-        console.error('[BACK] Erro ao fechar turno:', err);
-        return res.status(500).json({ error: 'Erro ao fechar turno' });
-    }
-});
-
-app.get("/caixa/turnos", requireAuth, async (req, res) => {
-    const dataInicio = normalizeDateParam(req.query.dataInicio);
-    const dataFim = normalizeDateParam(req.query.dataFim);
-
-    let sql = `SELECT
-        id,
-        TO_CHAR(data_ref, 'YYYY-MM-DD') as data_ref,
-        aberto_em,
-        fechado_em,
-        observacao_abertura,
-        observacao_fechamento
-     FROM caixa_turnos WHERE 1=1`;
-    const params = [];
-
-    if (dataInicio) {
-        params.push(dataInicio);
-        sql += ` AND data_ref >= $${params.length}`;
-    }
-    if (dataFim) {
-        params.push(dataFim);
-        sql += ` AND data_ref <= $${params.length}`;
-    }
-
-    sql += ` ORDER BY aberto_em DESC`;
-
-    try {
-        await ensureDatabase();
-        const result = await query(sql, params);
-        return res.json({ success: true, dados: result.rows || [] });
-    } catch (err) {
-        console.error('[BACK] Erro ao listar turnos:', err);
-        return res.status(500).json({ error: 'Erro ao listar turnos' });
-    }
-});
-
-
 // ROTA PARA OBTER DASHBOARD DE VAGAS
 app.get("/dashboard", async (req, res) => {
     try {

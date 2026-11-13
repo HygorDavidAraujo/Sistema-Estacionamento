@@ -39,7 +39,8 @@ export const initDb = createDatabaseInitializer({
     loadSql: async () => (await Promise.all([
         'migrations/000-compatibility.sql',
         'schema.sql',
-        'migrations/001-security.sql'
+        'migrations/001-security.sql',
+        'migrations/002-cash-shifts.sql'
     ].map(file => fs.readFile(resolve(__dirname, file), 'utf8')))).join('\n'),
     onApplied: () => console.log('[BACK] Schema aplicado com sucesso')
 });

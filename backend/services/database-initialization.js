@@ -1,4 +1,4 @@
-export const schemaVersion = '001-security';
+export const schemaVersion = '002-cash-shifts';
 const migrationLock = 743221905;
 
 export function createDatabaseInitializer({ pool, loadSql, onApplied = () => {} }) {
