@@ -48,18 +48,45 @@ export function tariff(config) {
     if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 120) fail('Tolerância não configurada corretamente', 503);
     return { inicial: cents(config.valor_hora_inicial), adicional: cents(config.valor_hora_adicional), diaria: cents(config.valor_diaria), tolerancia: tolerance };
 }
+export function dailyDeadline(value, now, timeZone = 'America/Sao_Paulo') {
+    // datetime-local do formulário representa o fuso do estacionamento, não o do terminal.
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) {
+        const local = value; const desired = Date.parse(`${value}:00Z`);
+        if (!civilDate(value) || !Number.isFinite(desired)) fail('Data de retirada inválida');
+        const format = new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+        const text = instant => { const p=Object.fromEntries(format.formatToParts(instant).map(part=>[part.type,part.value]));return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`; };
+        let candidate = desired;
+        for(let i=0;i<3;i++) candidate += desired-Date.parse(`${text(new Date(candidate))}Z`);
+        if(text(new Date(candidate)).slice(0,16)!==local) fail('Data ou horário de retirada inválido');
+        value=new Date(candidate).toISOString();
+    }
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(value)) fail('Informe a data e o horário de retirada da diária');
+    const deadline = new Date(value);
+    if (!civilDate(value) || !Number.isFinite(deadline.getTime()) || deadline <= now) fail('O horário de retirada deve ser posterior à entrada');
+    return deadline.toISOString();
+}
+export function hourlyAmount(minutes, settings, tolerance = settings.tolerancia) {
+    return minutes <= tolerance ? 0 : settings.inicial + Math.ceil(Math.max(0, minutes - 60) / 60) * settings.adicional;
+}
 export function price(entry, settings, now, monthlyEligible = false) {
     const start = new Date(entry.criado_em);
     if (!Number.isFinite(start.getTime())) fail('Horário de entrada inválido', 409);
     const ms = Math.max(0, now.getTime() - start.getTime());
     const minutes = Math.ceil(ms / 60000);
-    let amount;
+    let amount; let daily = {};
     if (entry.mensalista && monthlyEligible) amount = 0;
-    else if (entry.diarista) amount = settings.diaria * Math.max(1, Math.ceil(ms / 86400000));
-    else amount = minutes <= settings.tolerancia ? 0 : settings.inicial + Math.ceil(Math.max(0, minutes - 60) / 60) * settings.adicional;
+    else if (entry.diarista && entry.diaria_retirada_em && entry.diaria_valor_pago != null) {
+        const deadline = new Date(entry.diaria_retirada_em);
+        if (!Number.isFinite(deadline.getTime())) fail('Horário de retirada da diária inválido', 409);
+        const lateMinutes = Math.ceil(Math.max(0, now.getTime() - deadline.getTime()) / 60000);
+        amount = hourlyAmount(lateMinutes, settings, 0);
+        daily = { diaria_retirada_em: deadline.toISOString(), diaria_valor_pago: cents(entry.diaria_valor_pago)/100, atraso_minutos: lateMinutes };
+    }
+    else if (entry.diarista) { amount = settings.diaria; daily = { diaria_legada: true }; }
+    else amount = hourlyAmount(minutes, settings);
     if (!Number.isSafeInteger(amount) || amount > 9999999999) fail('Valor da permanência excede o limite', 409);
     const seconds = Math.floor(ms / 1000);
-    return { valor_centavos: amount, valor: amount / 100, tempo: `${String(Math.floor(seconds / 3600)).padStart(2, '0')}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
+    return { ...daily, valor_centavos: amount, valor: amount / 100, tempo: `${String(Math.floor(seconds / 3600)).padStart(2, '0')}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
         entrada_em: start.toISOString(), saida_em: now.toISOString(), tipo: entry.mensalista && monthlyEligible ? 'mensalista' : entry.diarista ? 'diarista' : 'avulso' };
 }
 export function operationKey(value) {

@@ -9,7 +9,7 @@ export async function testDatabase() {
     const connectionQuery = client => async(sql,params=[]) => normalize(params.length ? await client.query(sql,params) : (await client.exec(sql)).at(-1));
     const initialize = createDatabaseInitializer({
         pool:{ connect:async()=>({query:connectionQuery(pg),release(){}}) },
-        loadSql:async()=> (await Promise.all(['migrations/000-compatibility.sql','schema.sql','migrations/001-security.sql','migrations/002-cash-shifts.sql'].map(file=>readFile(new URL(`../${file}`,import.meta.url),'utf8')))).join('\n')
+        loadSql:async()=> (await Promise.all(['migrations/000-compatibility.sql','schema.sql','migrations/001-security.sql','migrations/002-cash-shifts.sql','migrations/003-prepaid-daily.sql'].map(file=>readFile(new URL(`../${file}`,import.meta.url),'utf8')))).join('\n')
     });
     const db = {
         initDb: () => ready ||= initialize().catch(error=>{ready=null;throw error;}),

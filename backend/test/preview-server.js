@@ -4,7 +4,9 @@ import { hashPassword } from '../services/auth.js';
 import { testDatabase } from './test-database.js';
 const { db,pg } = await testDatabase();
 await db.query('INSERT INTO usuarios (login,nome,perfil,senha_hash) VALUES ($1,$2,$3,$4)', ['teste','Operador de teste','administrador',await hashPassword('Senha-teste-123')]);
-const app=createApp({db,env:{NODE_ENV:'test'},plateFetch:async url=>Response.json({brand:'MARCA TESTE',model:url.includes('DEF4G56')?'VEÍCULO B':'VEÍCULO A',color:'Cinza'})});
+let testClockOffset=0;
+const app=createApp({db,env:{NODE_ENV:'test'},clock:()=>new Date(Date.now()+testClockOffset),plateFetch:async url=>Response.json({brand:'MARCA TESTE',model:url.includes('DEF4G56')?'VEÍCULO B':'VEÍCULO A',color:'Cinza'})});
+app.post('/__test/clock',(req,res)=>{testClockOffset=Number(req.body.advanceMinutes||0)*60000;res.json({success:true});});
 // Preparação exclusiva deste servidor isolado, sem equivalente na aplicação real.
 app.post('/__test/prepare',async (req,res)=>{
     const { placa,minutes=65,mensalista=false }=req.body;

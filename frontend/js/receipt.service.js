@@ -46,28 +46,31 @@
             result += line('Entrada',formatDate(receipt.entrada_em,tz)) + line('Tipo',receipt.categoria);
             const rates = receipt.tarifa;
             if (rates && receipt.categoria !== 'Mensalista') {
-                result += line('1ª hora / adicional',`${money(rates.inicial/100)} / ${money(rates.adicional/100)}`);
-                result += line('Tolerância inicial',`${rates.tolerancia} min`);
-                result += line('Diária (por 24 h)',money(rates.diaria/100));
+                result += line(receipt.diaria_retirada_em?'Atraso: 1ª hora / adicional':'1ª hora / adicional',`${money(rates.inicial/100)} / ${money(rates.adicional/100)}`);
+                if(!receipt.diaria_retirada_em){result += line('Tolerância inicial',`${rates.tolerancia} min`);result += line('Diária antecipada',money(rates.diaria/100));}
             }
+            if(receipt.diaria_retirada_em)result+=line('RETIRAR ATÉ',formatDate(receipt.diaria_retirada_em,tz),'total')+'<p class="small">Após o horário combinado: tarifa avulsa por hora iniciada, sem nova tolerância.</p>';
             result += `<div class="qr" id="${qrId}"></div><p class="center small">Apresente este ticket na saída.</p>`;
         } else if (receipt.tipo === 'saida') {
-            result += line('Entrada',formatDate(receipt.entrada_em,tz)) + line('Saída',formatDate(receipt.saida_em,tz)) + line('Permanência cobrada',receipt.tempo);
-            result += line('Tipo',receipt.tipo_cliente || ({ mensalista:'Mensalista',diarista:'Diária (24 h)',avulso:'Avulso' }[receipt.categoria]) || 'Avulso');
+            result += line('Entrada',formatDate(receipt.entrada_em,tz)) + line('Saída',formatDate(receipt.saida_em,tz)) + line('Permanência',receipt.tempo);
+            result += line('Tipo',receipt.tipo_cliente || ({ mensalista:'Mensalista',diarista:'Diária antecipada',avulso:'Avulso' }[receipt.categoria]) || 'Avulso');
+            if(receipt.diaria_retirada_em)result+=line('Retirada combinada',formatDate(receipt.diaria_retirada_em,tz))+line('Pago na entrada',money(receipt.diaria_valor_pago))+line('Atraso',`${receipt.atraso_minutos} min`);
             if (receipt.cobranca_ate) result += line('Cálculo até',formatDate(receipt.cobranca_ate,tz));
         } else {
             result += line('Cliente',receipt.cliente) + line('Pagamento',formatDate(receipt.emitido_em,tz)) + line('Período',`${receipt.meses} ${receipt.meses === 1 ? 'mês':'meses'}`);
             if (receipt.vencimento_anterior) result += line('Vencimento anterior',receipt.vencimento_anterior.split('-').reverse().join('/'));
             result += line('Novo vencimento',receipt.novo_vencimento.split('-').reverse().join('/'));
         }
-        if (receipt.tipo !== 'entrada') {
-            result += line('TOTAL PAGO',money(receipt.total),'total');
+        if (receipt.tipo !== 'entrada' || receipt.diaria_retirada_em) {
+            result += line(receipt.diaria_retirada_em?(receipt.tipo==='entrada'?'DIÁRIA PAGA':'PAGO NA SAÍDA'):'TOTAL PAGO',money(receipt.total),'total');
             for (const payment of receipt.pagamentos || []) result += line(payment.forma_pagamento,money(payment.valor_pago));
-            if (!(receipt.pagamentos || []).length) result += '<p class="small">Sem cobrança, conforme regra da permanência.</p>';
+            if (!(receipt.pagamentos || []).length) result += `<p class="small">${receipt.diaria_retirada_em?'Sem cobrança adicional.':'Sem cobrança, conforme regra da permanência.'}</p>`;
+            if(receipt.tipo==='saida'&&receipt.diaria_retirada_em)result+=line('Total da permanência',money((Math.round(receipt.diaria_valor_pago*100)+Math.round(receipt.total*100))/100));
         }
         if (receipt.observacao) result += `<p class="small">Obs.: ${escape(receipt.observacao)}</p>`;
         result += `<div class="footer small"><p>Operador: ${escape(receipt.operador || '-')}</p><p>${receipt.tipo === 'entrada' ? 'Ticket':'Operação'}: ${escape(receipt.numero)}</p>`;
         if (receipt.ticket) result += `<p>Ticket: ${escape(receipt.ticket)}</p>`;
+        if (receipt.operacao_id) result += `<p>Pagamento: ${escape(receipt.operacao_id)}</p>`;
         if (receipt.turno_id) result += `<p>Turno de caixa: ${escape(receipt.turno_id)}</p>`;
         return `${result}</div></article>`;
     }

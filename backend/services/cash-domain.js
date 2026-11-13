@@ -32,12 +32,13 @@ export async function shiftSummary(client,shift) {
         COALESCE(SUM(valor) FILTER (WHERE tipo='sangria'),0) AS sangrias
         FROM caixa_ajustes WHERE turno_id=$1`,[shift.id])).rows[0];
     const counts=(await client.query(`SELECT COUNT(*) FILTER (WHERE tipo='saida')::int AS saidas,
-        COUNT(*) FILTER (WHERE tipo='mensalidade')::int AS mensalidades FROM operacoes_financeiras WHERE turno_id=$1`,[shift.id])).rows[0];
+        COUNT(*) FILTER (WHERE tipo='mensalidade')::int AS mensalidades,
+        COUNT(*) FILTER (WHERE tipo='diaria')::int AS diarias FROM operacoes_financeiras WHERE turno_id=$1`,[shift.id])).rows[0];
     const fund=cents(shift.fundo_inicial),cash=cents(amounts.dinheiro),supply=cents(adjustments.suprimentos),withdraw=cents(adjustments.sangrias);
     return {turno_id:shift.id,revisao:shift.revisao,fundo_inicial:fund/100,total_recebido:cents(amounts.recebido)/100,
         total_dinheiro:cash/100,total_credito:cents(amounts.credito)/100,total_debito:cents(amounts.debito)/100,total_pix:cents(amounts.pix)/100,
         suprimentos:supply/100,sangrias:withdraw/100,saldo_esperado:(fund+cash+supply-withdraw)/100,
-        total_transacoes:amounts.recebimentos,total_parcelas:amounts.parcelas,saidas:counts.saidas,mensalidades:counts.mensalidades};
+        total_transacoes:amounts.recebimentos,total_parcelas:amounts.parcelas,saidas:counts.saidas,mensalidades:counts.mensalidades,diarias:counts.diarias};
 }
 export function dateRange(input) {
     const result={};for(const key of ['dataInicio','dataFim'])if(input[key]){result[key]=civilDate(String(input[key]));if(!result[key] || result[key]!==input[key])fail('Período inválido');}

@@ -143,7 +143,7 @@ async function getCaixaResumoPorData(dataRef) {
                             AND data_saida = $1
               AND NOT EXISTS (
                 SELECT 1 FROM caixa_movimentos cm
-                WHERE cm.origem = 'saida' AND cm.historico_id = h.id
+                WHERE cm.origem IN ('saida','diaria') AND cm.historico_id = h.id
               )
             UNION ALL
             SELECT data_pagamento AS data_ref, forma_pagamento, valor_pago
@@ -218,7 +218,7 @@ app.get("/patio/ativos", async (req, res) => {
                 modelo,
                 cor,
                 mensalista,
-                diarista,
+                diarista,diaria_retirada_em,diaria_valor_pago,tarifa,
                 cliente_nome,
                 cliente_telefone,
                 cliente_cpf,
@@ -259,7 +259,7 @@ app.get("/patio/ativo", async (req, res) => {
                                 modelo,
                                 cor,
                                 mensalista,
-                                diarista,
+                                diarista,diaria_retirada_em,diaria_valor_pago,tarifa,
                                 cliente_nome,
                                 cliente_telefone,
                                 cliente_cpf,
@@ -328,6 +328,7 @@ app.get("/historico", async (req, res) => {
             TO_CHAR(hora_saida, 'HH24:MI:SS') as hora_saida,
             tempo_permanencia,
             (SELECT chave FROM operacoes_financeiras WHERE tipo='saida' AND referencia=historico.id ORDER BY criado_em DESC LIMIT 1) AS operacao_id,
+            (SELECT chave FROM operacoes_financeiras WHERE tipo='diaria' AND referencia=historico.id LIMIT 1) AS diaria_operacao_id,
             valor_pago,
             forma_pagamento,
             status,
@@ -395,7 +396,7 @@ app.get("/historico/:placa", async (req, res) => {
                 modelo,
                 cor,
                 mensalista,
-                diarista,
+                diarista,diaria_retirada_em,diaria_valor_pago,tarifa,
                 cliente_nome,
                 cliente_telefone,
                 cliente_cpf,
@@ -405,6 +406,7 @@ app.get("/historico/:placa", async (req, res) => {
                 TO_CHAR(hora_saida, 'HH24:MI:SS') as hora_saida,
                 tempo_permanencia,
                 (SELECT chave FROM operacoes_financeiras WHERE tipo='saida' AND referencia=historico.id ORDER BY criado_em DESC LIMIT 1) AS operacao_id,
+            (SELECT chave FROM operacoes_financeiras WHERE tipo='diaria' AND referencia=historico.id LIMIT 1) AS diaria_operacao_id,
                 valor_pago,
                 forma_pagamento,
                 status,
@@ -470,7 +472,7 @@ app.get("/caixa/relatorio", async (req, res) => {
             WHERE status = 'saído'
               AND NOT EXISTS (
                 SELECT 1 FROM caixa_movimentos cm
-                WHERE cm.origem = 'saida' AND cm.historico_id = h.id
+                WHERE cm.origem IN ('saida','diaria') AND cm.historico_id = h.id
               )
             UNION ALL
             SELECT data_pagamento AS data_ref, forma_pagamento, valor_pago

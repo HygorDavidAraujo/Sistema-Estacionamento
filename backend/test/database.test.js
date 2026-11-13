@@ -41,7 +41,7 @@ test('API recupera 503 na mesma instância quando o banco volta, sem abrir opera
 function pgPool(pg){
     return {connect:async()=>({query:async(sql,params=[])=>params.length?pg.query(sql,params):(await pg.exec(sql)).at(-1),release(){}})};
 }
-const sqlFiles=['migrations/000-compatibility.sql','schema.sql','migrations/001-security.sql','migrations/002-cash-shifts.sql'];
+const sqlFiles=['migrations/000-compatibility.sql','schema.sql','migrations/001-security.sql','migrations/002-cash-shifts.sql','migrations/003-prepaid-daily.sql'];
 const schemaSql=async()=> (await Promise.all(sqlFiles.map(file=>readFile(new URL(`../${file}`,import.meta.url),'utf8')))).join('\n');
 test('migração de banco existente preserva dados, registra versão e evita repetir DDL',async t=>{
     const pg=await PGlite.create();t.after(()=>pg.close());
@@ -64,4 +64,13 @@ test('falha durante migração reverte schema e marcador, permitindo tentativa c
     assert.equal((await pg.query("SELECT to_regclass('public.estacionamento_migracoes') AS tabela")).rows[0].tabela,null);
     const good=createDatabaseInitializer({pool:pgPool(pg),loadSql:schemaSql});await good();
     assert.equal((await pg.query('SELECT versao FROM estacionamento_migracoes')).rows[0].versao,schemaVersion);
+});
+
+test('migração de diária preserva caixa aberto e mantém diárias anteriores sem pagamento presumido',async t=>{
+    const pg=await PGlite.create();t.after(()=>pg.close());
+    for(const file of sqlFiles.filter(file=>!file.includes('003-prepaid-daily')))await pg.exec(await readFile(new URL(`../${file}`,import.meta.url),'utf8'));
+    await pg.exec("CREATE TABLE estacionamento_migracoes (versao TEXT PRIMARY KEY, aplicado_em TIMESTAMPTZ DEFAULT NOW()); INSERT INTO estacionamento_migracoes (versao) VALUES ('002-cash-shifts'); INSERT INTO caixa_turnos (estado,operador_id,operador_nome,fundo_inicial) VALUES ('aberto',1,'Responsável anterior',100); INSERT INTO historico (entry_id,placa,diarista) VALUES ('daily-legacy','ABC1D23',true);");
+    const initialize=createDatabaseInitializer({pool:pgPool(pg),loadSql:schemaSql});await initialize();
+    const shift=(await pg.query('SELECT * FROM caixa_turnos')).rows[0];assert.equal(shift.estado,'aberto');assert.equal(Number(shift.fundo_inicial),100);assert.equal(shift.operador_nome,'Responsável anterior');
+    const entry=(await pg.query('SELECT * FROM historico')).rows[0];assert.equal(entry.diaria_retirada_em,null);assert.equal(entry.diaria_valor_pago,null);assert.equal(entry.diarista,true);
 });

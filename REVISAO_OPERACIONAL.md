@@ -107,6 +107,8 @@ A API aceita motivo vazio e usa a mesma credencial de qualquer operador. A inter
 
 ### O06 — P1: regras de diária, tolerância e alteração de preço precisam de contrato claro
 
+**Atualização em 13/11/2026:** o usuário definiu diária antecipada até o horário de fechamento informado pelo operador, com cobrança avulsa somente do atraso. Essa regra foi implementada; detalhes em [CORRECAO_DIARIA_ANTECIPADA.md](CORRECAO_DIARIA_ANTECIPADA.md). A reprodução abaixo descreve a versão anterior à revisão.
+
 **Reproduzido:** uma permanência marcada como diária continua custando uma única diária após 72 horas (`frontend/script.js:152–163`). Pode ser uma política intencional, mas precisa estar definida explicitamente; hoje não há recorrência por 24 horas ou diária de calendário.
 
 As tarifas ficam no cache e não são congeladas por permanência. Um terminal antigo pode cobrar outro preço; mudar a tarifa pode afetar veículos já no pátio. Se o primeiro carregamento das configurações falhar, os valores padrão da primeira hora/adicional/tolerância são colocados no formulário, mas não são todos gravados no cache utilizado pelo cálculo (`frontend/script.js:801–867`), permitindo total zero sem configuração local prévia. O preço também fica congelado ao abrir a tela de pagamento, ainda que o operador demore a confirmar.

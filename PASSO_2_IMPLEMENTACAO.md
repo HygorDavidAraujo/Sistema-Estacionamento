@@ -5,7 +5,7 @@ Implementação local em 13/11/2026, considerando a confirmação do usuário: *
 ## Funcionamento
 
 - Abertura com fundo inicial explícito, horário do servidor e usuário responsável. Há somente um turno aberto no sistema, com restrição no PostgreSQL inclusive para pedidos simultâneos entre instâncias da hospedagem.
-- Cada saída e recebimento de mensalidade pertence ao turno aberto do próprio usuário. Saída gratuita também exige turno e fica registrada, sem criar receita fictícia. Entradas podem continuar sendo registradas sem turno aberto.
+- Cada saída e recebimento de mensalidade pertence ao turno aberto do próprio usuário. Saída gratuita também exige turno e fica registrada, sem criar receita fictícia. Entradas avulsas e de mensalistas podem continuar sendo registradas sem turno aberto. Diárias novas exigem pagamento antecipado no próprio turno e horário combinado de retirada, conforme a [correção da diária](CORRECAO_DIARIA_ANTECIPADA.md).
 - A troca de operador exige encerrar o turno atual e abrir outro com o novo usuário. O fundo do novo turno deve refletir o dinheiro efetivamente entregue; não há transferência automática presumida. Não é possível desativar o responsável enquanto seu turno estiver aberto.
 - Sangria e suprimento possuem valor, justificativa de 10 a 255 caracteres, responsável, horário e comprovante. A sangria não pode superar o dinheiro disponível. Fundo e ajustes ficam separados da receita.
 - Dinheiro esperado na gaveta = fundo inicial + recebimentos em dinheiro + suprimentos − sangrias. Pix e cartões são conferidos separadamente. Pagamento dividido representa um recebimento com várias parcelas, sem multiplicar a quantidade de recebimentos.

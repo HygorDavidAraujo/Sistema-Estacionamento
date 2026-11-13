@@ -215,6 +215,12 @@
             <label class="checkbox-item"><input id="diaristaCheck" type="checkbox" /> Diária?</label>
         </div>
 
+        <div id="diaristaFields" hidden>
+            <label for="diariaRetirada">Retirar até (data e horário do estacionamento)</label>
+            <input id="diariaRetirada" type="datetime-local" />
+            <p class="help-text">Diária paga na entrada, válida até o horário combinado de fechamento. Após esse horário, cobra-se o atraso pela tarifa avulsa, por hora iniciada.</p>
+        </div>
+
         <div id="mensalistaFields" class="mensalista-fields" aria-hidden="true">
             <label for="mensalistaNome">Nome</label>
             <input id="mensalistaNome" type="text" />

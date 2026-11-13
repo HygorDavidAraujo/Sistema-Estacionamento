@@ -65,7 +65,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await CashService.refresh();
         updatePatioCarList();
     };
-    window.onSessionEnded = () => { CashService.clear(); window.mensalistaEditId = null; restoreCandidate = null; };
+    window.onSessionEnded = () => { CashService.clear(); window.mensalistaEditId = null; restoreCandidate = null; clearEntradaForm(); };
     if (await AuthService.initialize()) await window.onSessionStarted();
     // atualiza tempos no pátio, dashboard vagas e caixa a cada 10s
     let refreshing = false;
@@ -165,7 +165,14 @@ function getEntryPricing(entry, horaSaida = new Date()) {
         return { tempoFormatado, total: 0, horaEntrada, horaSaida, tipo: 'mensalista' };
     }
     if (entry.diarista) {
-        return { tempoFormatado, total: (valorDiaria || 0) * Math.max(1,Math.ceil(Math.max(0,horaSaida-horaEntrada)/86400000)), horaEntrada, horaSaida, tipo: 'diarista' };
+        let due=entry.tarifa?.diaria!=null?entry.tarifa.diaria/100:valorDiaria;
+        if(entry.diaria_retirada_em&&entry.diaria_valor_pago!=null){
+            const minutes=Math.ceil(Math.max(0,horaSaida-new Date(entry.diaria_retirada_em))/60000);
+            const first=entry.tarifa?.inicial!=null?entry.tarifa.inicial/100:Number(localStorage.getItem('valorHora')||0);
+            const additional=entry.tarifa?.adicional!=null?entry.tarifa.adicional/100:Number(localStorage.getItem('valorHoraAdicional')||0);
+            due=minutes===0?0:first+Math.ceil(Math.max(0,minutes-60)/60)*additional;
+        }
+        return { tempoFormatado, total:due||0, horaEntrada, horaSaida, tipo: 'diarista' };
     }
     return { tempoFormatado, total, horaEntrada, horaSaida, tipo: 'avulso' };
 }
@@ -609,6 +616,7 @@ function bindUI() {
             document.getElementById('mensalistaTelefone').value = '';
             document.getElementById('mensalistaCpf').value = '';
         }
+        document.getElementById('diaristaFields').hidden=!diaristaCheck?.checked;
     };
 
     const syncDiaristaUI = () => {
@@ -623,6 +631,7 @@ function bindUI() {
             document.getElementById('mensalistaTelefone').value = '';
             document.getElementById('mensalistaCpf').value = '';
         }
+        document.getElementById('diaristaFields').hidden=!diaristaCheck?.checked;
     };
 
     mensalistaCheck?.addEventListener('change', syncMensalistaUI);
@@ -740,6 +749,9 @@ function mapBackendEntryToLocal(row) {
         horaEntradaMs: horaEntradaDate.getTime(),
         mensalista: !!row.mensalista,
         diarista: !!row.diarista,
+        diaria_retirada_em: row.diaria_retirada_em,
+        diaria_valor_pago: row.diaria_valor_pago,
+        tarifa: row.tarifa,
         cliente_nome: row.cliente_nome || '',
         cliente_telefone: row.cliente_telefone || '',
         cliente_cpf: row.cliente_cpf || ''
@@ -937,6 +949,8 @@ function clearEntradaForm() {
     document.getElementById('corEntrada').value = '';
     document.getElementById('mensalistaCheck').checked = false;
     document.getElementById('diaristaCheck').checked = false;
+    document.getElementById('diariaRetirada').value = '';
+    document.getElementById('diaristaFields').hidden = true;
     document.getElementById('mensalistaNome').value = '';
     document.getElementById('mensalistaTelefone').value = '';
     document.getElementById('mensalistaCpf').value = '';
@@ -954,13 +968,38 @@ async function registrarEntrada() {
     entradaBusy = true; document.getElementById('registrarBtn').disabled = true;
     try {
         const body = { placa,marca:document.getElementById('marcaEntrada').value.trim(),modelo:document.getElementById('modeloEntrada').value.trim(),cor:document.getElementById('corEntrada').value.trim(),mensalista:document.getElementById('mensalistaCheck').checked,diarista:document.getElementById('diaristaCheck').checked };
+        if(body.diarista){
+            body.retirada_em=document.getElementById('diariaRetirada').value;
+            if(!body.retirada_em)throw Error('Informe a data e o horário limite para retirada da diária.');
+            const shift=await CashService.requireOwnShift();
+            const {dados}=await operationRequest('/entrada/diaria/cotacao',{retirada_em:body.retirada_em});
+            window.dadosPagamento={modo:'diaria',entrada:{...body,retirada_em:dados.retirada_em},turno_id:shift.id,operacao_id:crypto.randomUUID(),valor:dados.valor};
+            document.getElementById('resumoPagamento').innerHTML=`<h4>Diária antecipada</h4><p>Placa: <strong>${escapeHtml(placa)}</strong></p><p>Retirar até: <strong>${escapeHtml(new Date(dados.retirada_em).toLocaleString('pt-BR',{timeZone:dados.fuso}))}</strong></p><p class="valor-total">Pagar agora: ${formatCurrency(dados.valor)}</p><p class="help-text">Após o horário combinado, o atraso será cobrado pela tarifa avulsa. A entrada é registrada ao confirmar o pagamento.</p>`;
+            resetSplitUI('splitPagamentoLista','splitPagamentoTotal','splitPagamentoRestante',dados.valor);
+            closePopup('entradaPopup');openPopup('pagamentoPopup');return;
+        }
         const data = await operationRequest('/entrada',body);
-        const entrada = { ...body,entryId:data.entry_id,horaEntrada:data.criado_em,horaEntradaMs:new Date(data.criado_em).getTime(),comprovante:data.comprovante };
-        StorageService.saveEntry(entrada); saveVehicleInfo(placa,body.marca,body.modelo,body.cor);
-        updatePatioCarList(); await carregarDashboard(); clearEntradaForm(); fecharCameraEntrada(); closePopup('entradaPopup');
-        await renderComprovanteEntrada(entrada); openPopup('comprovanteEntradaPopup');
+        await concluirEntrada(body,data);
     } catch (error) { notify(error.message,'error',6000); }
     finally { entradaBusy = false; document.getElementById('registrarBtn').disabled = false; }
+}
+
+async function concluirEntrada(body,data){
+    const entrada={...body,entryId:data.entry_id,horaEntrada:data.criado_em,horaEntradaMs:new Date(data.criado_em).getTime(),comprovante:data.comprovante,diaria_retirada_em:data.comprovante.diaria_retirada_em,diaria_valor_pago:data.comprovante.diaria_valor_pago,tarifa:data.comprovante.tarifa};
+    StorageService.saveEntry(entrada);saveVehicleInfo(body.placa,body.marca,body.modelo,body.cor);
+    updatePatioCarList();await carregarDashboard();await CashService.refresh();clearEntradaForm();fecharCameraEntrada();closePopup('entradaPopup');closePopup('pagamentoPopup');
+    await renderComprovanteEntrada(entrada);openPopup('comprovanteEntradaPopup');
+}
+
+async function processarEntradaDiaria(pagamentos){
+    const dados=window.dadosPagamento;if(dados?.modo!=='diaria'||entradaBusy)return;
+    entradaBusy=true;document.getElementById('confirmarPagamentoBtn').disabled=true;
+    try{
+        const body={...dados.entrada,turno_id:dados.turno_id,operacao_id:dados.operacao_id,pagamentos};
+        const data=await operationRequest('/entrada',body);
+        await concluirEntrada(body,data);window.dadosPagamento=null;
+    }catch(error){notify(error.message+' Se a conexão caiu, confirme novamente a mesma operação.','error',8000);}
+    finally{entradaBusy=false;document.getElementById('confirmarPagamentoBtn').disabled=false;}
 }
 
 async function prepararPagamento(entry) {
@@ -969,7 +1008,7 @@ async function prepararPagamento(entry) {
         const shift = await CashService.requireOwnShift();
         const { dados } = await operationRequest('/saida/cotacao',{ entryId:entry.entryId,placa:entry.placa });
         window.dadosPagamento = { ...dados,turno_id:shift.id,entryId:dados.entry_id,valor:dados.valor,tempo:dados.tempo,horaEntrada:new Date(dados.entrada_em),horaSaida:new Date(dados.saida_em) };
-        document.getElementById('resumoPagamento').innerHTML = `<h4>Resumo da permanência</h4><p>Placa: <strong>${escapeHtml(dados.placa)}</strong></p><p>Entrada: ${escapeHtml(new Date(dados.entrada_em).toLocaleString('pt-BR'))}</p><p>Permanência: ${escapeHtml(dados.tempo)}</p><p>Tipo: ${escapeHtml(dados.tipo)}</p><p class="valor-total">Total: ${formatCurrency(dados.valor)}</p><p class="help-text">Valor confirmado pelo servidor. Cotação válida por 2 minutos.</p>`;
+        document.getElementById('resumoPagamento').innerHTML = `<h4>Resumo da permanência</h4><p>Placa: <strong>${escapeHtml(dados.placa)}</strong></p><p>Entrada: ${escapeHtml(new Date(dados.entrada_em).toLocaleString('pt-BR'))}</p><p>Permanência: ${escapeHtml(dados.tempo)}</p><p>Tipo: ${escapeHtml(dados.tipo)}</p>${dados.diaria_retirada_em?`<p>Diária já paga: ${formatCurrency(dados.diaria_valor_pago)}</p><p>Retirada combinada: ${escapeHtml(new Date(dados.diaria_retirada_em).toLocaleString('pt-BR',{timeZone:dados.fuso}))}</p><p>Atraso: ${escapeHtml(dados.atraso_minutos)} min</p>`:''}<p class="valor-total">${dados.diaria_retirada_em?'Atraso a pagar':'Total'}: ${formatCurrency(dados.valor)}</p><p class="help-text">Valor confirmado pelo servidor. Cotação válida por 2 minutos.</p>`;
         closePopup('saidaPopup');
         if (dados.valor > 0) { resetSplitUI('splitPagamentoLista','splitPagamentoTotal','splitPagamentoRestante',dados.valor); openPopup('pagamentoPopup'); }
         else await processarSaida([]);
@@ -1003,11 +1042,12 @@ function confirmarPagamento() {
     }
 
     if (!validateSplitTotal(total, pagamentos)) {
-        alert('A soma das formas de pagamento precisa fechar o total da saída');
+        alert('A soma das formas de pagamento precisa fechar o total');
         return;
     }
 
-    processarSaida(pagamentos);
+    if(window.dadosPagamento?.modo==='diaria')processarEntradaDiaria(pagamentos);
+    else processarSaida(pagamentos);
 }
 
 ///////////////////////////
@@ -1145,10 +1185,11 @@ function updatePatioCarList() {
                          <p><b>Modelo:</b> ${escapeHtml(ent.modelo)}</p>
                          <p><b>Cor:</b> ${escapeHtml(ent.cor)}</p>
                          <p><b>Tempo no Pátio:</b> ${tempoFormatado}</p>
+                         ${ent.diaria_retirada_em?`<p><b>Diária paga:</b> ${formatCurrency(ent.diaria_valor_pago)}</p><p><b>Retirar até:</b> ${escapeHtml(new Date(ent.diaria_retirada_em).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}))}</p>`:''}
                          <p><b>Estimativa:</b> <span class="valor-devido">R$ ${total.toFixed(2)}</span></p>
                          <div class="card-actions">
                              <button class="btn-saida-card" data-entry-id="${escapeHtml(ent.entryId)}">Registrar Saída</button>
-                             <button class="btn-cancel-card" data-entry-id="${escapeHtml(ent.entryId)}" title="Cancelar entrada">Cancelar</button>
+                             ${ent.diaria_valor_pago!=null?'':`<button class="btn-cancel-card" data-entry-id="${escapeHtml(ent.entryId)}" title="Cancelar entrada">Cancelar</button>`}
                              <button class="btn-print-card" data-entry-id="${escapeHtml(ent.entryId)}" title="Reimprimir comprovante">🖨️</button>
                          </div>`;
         patio.appendChild(div);
@@ -1223,9 +1264,9 @@ async function abrirComprovanteOperacao(key){
     try{
         const res=await apiFetch(`${BACKEND_BASE}/comprovantes/operacao/${encodeURIComponent(key)}`);const data=await res.json();
         if(!res.ok)throw new Error(data.error||'Comprovante não encontrado');
-        const monthly=data.dados.tipo==='mensalidade';
-        await ReceiptService.render(monthly?'comprovanteMensalidade':'comprovantePermanencia',data.dados);
-        openPopup(monthly?'comprovanteMensalidadePopup':'comprovantePermanenciaPopup');
+        const target=({mensalidade:'comprovanteMensalidade',entrada:'comprovanteEntrada'})[data.dados.tipo]||'comprovantePermanencia';
+        await ReceiptService.render(target,data.dados);
+        openPopup(`${target}Popup`);
     }catch(error){notify(error.message,'error');}
 }
 
@@ -1532,7 +1573,7 @@ function carregarHistoricoCompleto(filtros = {}) {
                     <td>${escapeHtml(row.tempo_permanencia || '-')}</td>
                     <td>R$ ${Number(row.valor_pago || 0).toFixed(2)}</td>
                     <td>${escapeHtml(row.status)}</td>
-                    <td>${row.operacao_id ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.operacao_id)}">Reimprimir</button>` : '-'}</td>
+                    <td>${row.operacao_id ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.operacao_id)}">Reimprimir</button>` : '-'}${row.diaria_operacao_id?`<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.diaria_operacao_id)}">Diária paga</button>`:''}</td>
                 </tr>`;
             });
             html += '</table>';
@@ -1599,7 +1640,7 @@ function buscarPorPlaca() {
                     <td>${escapeHtml(row.tempo_permanencia || '-')}</td>
                     <td>R$ ${Number(row.valor_pago || 0).toFixed(2)}</td>
                     <td>${escapeHtml(row.status)}</td>
-                    <td>${row.operacao_id ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.operacao_id)}">Reimprimir</button>` : '-'}</td>
+                    <td>${row.operacao_id ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.operacao_id)}">Reimprimir</button>` : '-'}${row.diaria_operacao_id?`<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.diaria_operacao_id)}">Diária paga</button>`:''}</td>
                 </tr>`;
             });
             html += '</table>';

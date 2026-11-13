@@ -1,4 +1,4 @@
-export const schemaVersion = '002-cash-shifts';
+export const schemaVersion = '003-prepaid-daily';
 const migrationLock = 743221905;
 
 export function createDatabaseInitializer({ pool, loadSql, onApplied = () => {} }) {

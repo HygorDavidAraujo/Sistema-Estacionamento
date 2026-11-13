@@ -300,3 +300,45 @@ test('caixa pela interface: fundo, suprimento, sangria, diferença, aprovação 
         await popup.screenshot({path:`../artifacts/fechamento-caixa-${width}mm.png`,fullPage:true});await popup.close();
     }
 });
+
+test('diária paga na entrada, horário combinado e cobrança somente do atraso, com impressão 58/80 mm',async({page})=>{
+    await page.evaluate(()=>{const open=window.open.bind(window);window.open=(...args)=>{const child=open(...args);if(child)child.print=()=>{child.__printed=true;};return child;};});
+    const plate='PQR3S45';
+    const deadline=await page.evaluate(()=>{
+        const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(Date.now()+10*3600000)).map(p=>[p.type,p.value]));
+        return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+    });
+    await page.click('#btnEntrada');await page.fill('#placaEntrada',plate);await expect(page.locator('#modeloEntrada')).not.toHaveValue('');
+    await page.check('#diaristaCheck');await expect(page.locator('#diariaRetirada')).toBeVisible();
+    await page.click('#registrarBtn');await expect(page.locator('#toastContainer')).toContainText('Informe a data e o horário');
+    await page.fill('#diariaRetirada',deadline);await page.click('#registrarBtn');
+    await expect(page.locator('#pagamentoPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#resumoPagamento')).toContainText('Diária antecipada');await expect(page.locator('#splitPagamentoTotal')).toHaveText('R$ 25.00');
+    expect(await page.evaluate(async plate=>(await(await apiFetch(`${BACKEND_BASE}/patio/ativos`)).json()).dados.some(row=>row.placa===plate),plate)).toBe(false);
+    await page.selectOption('#splitPagamentoLista .split-forma','Dinheiro');await page.fill('#splitPagamentoLista .split-valor','10');await page.click('#addSplitPagamento');
+    await page.locator('#splitPagamentoLista .split-forma').nth(1).selectOption('Pix');await page.click('#confirmarPagamentoBtn');
+    await expect(page.locator('#comprovanteEntradaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteEntrada')).toContainText('RETIRAR ATÉ');await expect(page.locator('#comprovanteEntrada')).toContainText('DIÁRIA PAGA');
+    await expect(page.locator('#comprovanteEntrada')).toContainText('25,00');await expect(page.locator('#comprovanteEntrada')).not.toContainText('24 h');
+    async function print(target,label,width){
+        await page.locator(`#${target}`).locator('..').locator('.receipt-width').selectOption(width);
+        const pending=page.waitForEvent('popup');await page.locator(`[data-receipt-print="${target}"]`).click();const popup=await pending;await popup.waitForFunction(()=>window.__printed);
+        const metrics=await popup.evaluate(()=>{const r=document.querySelector('.receipt');return {overflow:r.scrollWidth>Math.ceil(r.getBoundingClientRect().width),height:r.getBoundingClientRect().height};});
+        expect(metrics.overflow).toBe(false);expect(metrics.height*25.4/96).toBeLessThan(150);
+        await expect(popup.locator('body')).toContainText('25,00');await expect(popup.locator('body')).not.toContainText('24 h');
+        await popup.evaluate(()=>{window.onafterprint=null;});const pdf=await popup.pdf({path:`../artifacts/diaria-${label}-${width}mm.pdf`,preferCSSPageSize:true});expect((pdf.toString('latin1').match(/\/Type \/Page\b/g)||[]).length).toBe(1);
+        await popup.screenshot({path:`../artifacts/diaria-${label}-${width}mm.png`,fullPage:true});await popup.close();
+    }
+    for(const width of ['80','58'])await print('comprovanteEntrada','entrada',width);
+    await page.locator('#comprovanteEntradaPopup [data-close]').click();
+    await page.reload();await expect(page.locator('#connectionStatus')).toHaveText('Sincronizado');
+    await page.evaluate(()=>{const open=window.open.bind(window);window.open=(...args)=>{const child=open(...args);if(child)child.print=()=>{child.__printed=true;};return child;};});
+    const card=page.locator('.car-item').filter({hasText:plate});await expect(card).toContainText('Retirar até:');await expect(card).toContainText('R$ 0.00');await expect(card.locator('.btn-cancel-card')).toHaveCount(0);
+    await card.locator('.btn-print-card').click();await expect(page.locator('#comprovanteEntrada')).toContainText('DIÁRIA PAGA');await page.locator('#comprovanteEntradaPopup [data-close]').click();
+    await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:661});});
+    try{
+        await card.locator('.btn-saida-card').click();await expect(page.locator('#pagamentoPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#resumoPagamento')).toContainText('Diária já paga: R$ 25.00');await expect(page.locator('#splitPagamentoTotal')).toHaveText('R$ 7.50');
+        await page.selectOption('#splitPagamentoLista .split-forma','Pix');await page.click('#confirmarPagamentoBtn');await expect(page.locator('#comprovantePermanenciaPopup')).toHaveAttribute('aria-hidden','false');
+        await expect(page.locator('#comprovantePermanencia')).toContainText('PAGO NA SAÍDA');await expect(page.locator('#comprovantePermanencia')).toContainText('7,50');await expect(page.locator('#comprovantePermanencia')).toContainText('32,50');
+        for(const width of ['80','58'])await print('comprovantePermanencia','saida',width);
+        await expect(card).toHaveCount(0);
+    }finally{await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:0});});}
+});
