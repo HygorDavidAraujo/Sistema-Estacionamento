@@ -688,3 +688,13 @@ input[type="text"],input[type="number"],select { padding:11px 12px; border:1px s
     .camera-actions button { width:100%; }
 }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none !important; animation:none !important; } }
+
+.session-identity{max-width:1500px;margin:12px auto 0;padding:0 28px;color:var(--muted);font-size:12px}
+body[data-session="locked"] .main-container{display:none}
+body[data-session="locked"] .header-actions button:not(#btnAuth){display:none}
+input[type="password"]{display:block;width:100%;padding:11px 12px;border:1px solid #d3dfe4;border-radius:9px;font:inherit}
+.user-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.print-controls{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.print-controls label{margin:0}.print-controls select{width:auto}
+#comprovanteEntrada,#comprovantePermanencia,#comprovanteMensalidade{max-width:300px;margin:auto;color:#000;background:#fff}
+#mensalistasPopup[data-can-edit="false"] .mensalista-form,#mensalistasPopup[data-can-edit="false"] [data-edit-id]{display:none}

@@ -26,9 +26,8 @@ test('aplicação completa inicia, serve a interface e protege as rotas sem toca
     assert.equal((await fetch(`${base}/frontend/js/plate-camera.js`)).status, 200);
     assert.equal((await fetch(`${base}/historico`)).status, 401);
     assert.equal((await fetch(`${base}/api/mensalistas`)).status, 401);
-    assert.equal((await fetch(`${base}/api/placa/12345678`, { headers: { 'x-admin-token': 'integration-test' } })).status, 400);
+    assert.equal((await fetch(`${base}/api/placa/12345678`, { headers: { 'x-admin-token': 'integration-test' } })).status, 401);
     assert.equal((await fetch(`${base}/backend/.env`)).status, 404);
-    const diagnostics = await (await fetch(`${base}/api/servicos/placas`, { headers: { 'x-admin-token': 'integration-test' } })).json();
-    assert.equal(diagnostics.consulta.fornecedor, 'parallelum');
-    assert.equal(diagnostics.camera.local, true);
+    assert.equal((await fetch(`${base}/configuracoes`)).status, 401);
+    assert.equal((await fetch(`${base}/api/servicos/placas`, { headers: { 'x-admin-token': 'integration-test' } })).status, 401);
 });

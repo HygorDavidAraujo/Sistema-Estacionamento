@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#123a52" />
     <link rel="stylesheet" href="frontend/style.css" />
 </head>
-<body>
+<body data-session="locked">
 <header>
     <div class="brand"><span class="brand-symbol" aria-hidden="true">P</span><div><span class="eyebrow">CENTRAL DE OPERAÇÃO</span><h1>Estacionamento</h1></div></div>
     <div class="header-actions">
@@ -17,10 +17,53 @@
         <button id="btnMenu">Configurações</button>
         <button id="btnMensalistas">Mensalistas</button>
         <button id="btnAuth">Acesso</button>
+        <button id="btnMinhaSenha" hidden>Minha senha</button>
     </div>
 </header>
 
 <div id="toastContainer" aria-live="polite" role="status"></div>
+<p id="sessionIdentity" class="session-identity">Entre para operar o estacionamento</p>
+
+<div class="popup" role="dialog" aria-modal="true" id="authPopup" aria-hidden="true" aria-labelledby="authTitle">
+    <div class="popup-content">
+        <h3 id="authTitle">Acesso ao estacionamento</h3>
+        <form id="authForm">
+            <div id="authSetupFields" hidden>
+                <label for="authNome">Seu nome</label><input id="authNome" type="text" maxlength="120" autocomplete="name" />
+                <label for="authCodigo">Código de primeiro acesso</label><input id="authCodigo" type="password" autocomplete="off" />
+            </div>
+            <label for="authLogin">Usuário</label><input id="authLogin" type="text" required minlength="3" maxlength="60" autocomplete="username" autocapitalize="none" />
+            <label for="authSenha">Senha</label><input id="authSenha" type="password" required maxlength="128" autocomplete="current-password" />
+            <p id="authMessage" role="status" class="help-text"></p>
+            <button id="authSubmit" type="submit">Entrar</button>
+        </form>
+    </div>
+</div>
+
+<div class="popup" role="dialog" aria-modal="true" id="usuariosPopup" aria-hidden="true" aria-labelledby="usuariosTitle">
+    <div class="popup-content popup-content-large">
+        <button class="close" data-close aria-label="Fechar">&times;</button><h3 id="usuariosTitle">Usuários e permissões</h3>
+        <div id="usuariosLista"></div>
+        <form id="usuarioForm">
+            <input type="hidden" id="usuarioId" />
+            <label for="usuarioNome">Nome</label><input id="usuarioNome" type="text" required minlength="2" maxlength="120" />
+            <label for="usuarioLogin">Usuário</label><input id="usuarioLogin" type="text" required pattern="[a-z0-9._-]{3,60}" autocomplete="off" />
+            <label for="usuarioPerfil">Perfil</label><select id="usuarioPerfil"><option value="operador">Operador</option><option value="supervisor">Supervisor</option><option value="financeiro">Financeiro</option><option value="administrador">Administrador</option></select>
+            <label for="usuarioSenha">Senha (12 a 128 caracteres; deixe vazia ao editar para manter)</label><input id="usuarioSenha" type="password" minlength="12" maxlength="128" autocomplete="new-password" />
+            <label class="checkbox-item"><input id="usuarioAtivo" type="checkbox" checked /> Ativo</label>
+            <div class="inline-actions"><button id="usuarioSalvar" type="submit">Salvar usuário</button><button id="usuarioNovo" type="button" class="btn-ghost">Novo usuário</button></div>
+        </form>
+        <p id="usuariosMessage" role="status"></p>
+    </div>
+</div>
+
+<div class="popup" role="dialog" aria-modal="true" id="senhaPopup" aria-hidden="true" aria-labelledby="senhaTitle">
+    <div class="popup-content"><button class="close" data-close aria-label="Fechar">&times;</button><h3 id="senhaTitle">Alterar minha senha</h3>
+        <form id="senhaForm"><label for="senhaAtual">Senha atual</label><input id="senhaAtual" type="password" required autocomplete="current-password" />
+            <label for="senhaNova">Nova senha (12 a 128 caracteres)</label><input id="senhaNova" type="password" required minlength="12" maxlength="128" autocomplete="new-password" />
+            <button id="senhaSalvar" type="submit">Alterar senha</button></form><p id="senhaMessage" role="status"></p>
+    </div>
+</div>
 
 <div class="main-container">
     <main id="main">
@@ -246,7 +289,8 @@
             <input id="mensalidadeMeses" type="number" min="1" value="1" />
 
             <label for="mensalidadeValor">Valor da Mensalidade (R$)</label>
-            <input id="mensalidadeValor" type="number" step="0.01" />
+            <input id="mensalidadeValor" type="number" step="0.01" readonly aria-describedby="mensalidadeValorAjuda" />
+            <p id="mensalidadeValorAjuda" class="help-text">Valor definido na tabela de preços do estacionamento.</p>
 
             <label for="mensalidadeObservacao">Observação</label>
             <input id="mensalidadeObservacao" type="text" />
@@ -309,6 +353,11 @@
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <h3>Configurações</h3>
+        <button id="btnUsuarios" type="button">Usuários e permissões</button>
+        <label for="nomeEstacionamento">Nome nos comprovantes</label><input id="nomeEstacionamento" type="text" maxlength="120" />
+        <label for="documentoEstacionamento">Documento do estacionamento</label><input id="documentoEstacionamento" type="text" maxlength="40" />
+        <label for="enderecoEstacionamento">Endereço</label><input id="enderecoEstacionamento" type="text" maxlength="180" />
+        <label for="telefoneEstacionamento">Telefone</label><input id="telefoneEstacionamento" type="text" maxlength="40" />
 
         <label for="valorHora">Valor 1ª Hora (R$)</label>
         <input id="valorHora" type="number" step="0.01" />
@@ -335,6 +384,15 @@
         </div>
 
         <button id="saveConfigBtn">Salvar</button>
+    </div>
+</div>
+
+<div class="popup" role="dialog" aria-modal="true" id="restorePopup" aria-hidden="true" aria-labelledby="restoreTitle">
+    <div class="popup-content"><button class="close" data-close aria-label="Fechar">&times;</button><h3 id="restoreTitle">Restaurar backup operacional</h3>
+        <p>Os dados operacionais serão substituídos. Usuários e senhas serão preservados.</p><p id="restoreResumo"></p>
+        <form id="restoreForm"><label for="restoreConfirmacao">Digite RESTAURAR para confirmar</label><input id="restoreConfirmacao" type="text" required autocomplete="off" />
+            <label for="restoreSenha">Sua senha de administrador</label><input id="restoreSenha" type="password" required autocomplete="current-password" />
+            <button id="restoreSubmit" type="submit">Validar e restaurar</button></form><p id="restoreMessage" role="status"></p>
     </div>
 </div>
 
@@ -408,7 +466,7 @@
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <div id="comprovanteEntrada"></div>
-        <button id="printEntradaBtn">Imprimir</button>
+        <div class="print-controls"><label for="printEntradaWidth">Papel</label><select id="printEntradaWidth" class="receipt-width"><option value="80">80 mm</option><option value="58">58 mm</option></select><button id="printEntradaBtn" data-receipt-print="comprovanteEntrada">Imprimir</button></div>
     </div>
 </div>
 
@@ -416,7 +474,13 @@
     <div class="popup-content">
         <button class="close" data-close>&times;</button>
         <div id="comprovantePermanencia"></div>
-        <button id="printPermanenciaBtn">Imprimir</button>
+        <div class="print-controls"><label for="printSaidaWidth">Papel</label><select id="printSaidaWidth" class="receipt-width"><option value="80">80 mm</option><option value="58">58 mm</option></select><button id="printPermanenciaBtn" data-receipt-print="comprovantePermanencia">Imprimir</button></div>
+    </div>
+</div>
+
+<div class="popup" role="dialog" aria-modal="true" id="comprovanteMensalidadePopup" aria-hidden="true">
+    <div class="popup-content"><button class="close" data-close aria-label="Fechar">&times;</button><div id="comprovanteMensalidade"></div>
+        <div class="print-controls"><label for="printMensalidadeWidth">Papel</label><select id="printMensalidadeWidth" class="receipt-width"><option value="80">80 mm</option><option value="58">58 mm</option></select><button data-receipt-print="comprovanteMensalidade">Imprimir</button></div>
     </div>
 </div>
 
@@ -528,6 +592,8 @@
 <script src="frontend/js/qrcode.service.js"></script>
 <script src="frontend/js/qr-reader.service.js"></script>
 <script src="frontend/js/storage.service.js"></script>
+<script src="frontend/js/auth.service.js"></script>
+<script src="frontend/js/receipt.service.js"></script>
 
 <script src="frontend/script.js"></script>
 </body>

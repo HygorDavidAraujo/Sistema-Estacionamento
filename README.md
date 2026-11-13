@@ -70,9 +70,15 @@ A câmera exige **HTTPS ou localhost**. Para abrir pelo celular, use a versão H
 
 ## Acesso e hospedagem
 
-Defina um `ADMIN_TOKEN` longo e exclusivo no ambiente de produção e informe-o pelo botão **Acesso**. Consultas de placa e leitura de dados operacionais exigem o token quando configurado. Em Vercel ou `NODE_ENV=production`, operações protegidas ficam indisponíveis se o token não tiver sido configurado.
+O botão **Acesso** usa usuário e senha individual. Nenhuma operação é liberada sem sessão, inclusive no ambiente local. Senhas são armazenadas com scrypt; sessões expiram após 8 horas e são revogadas ao sair, alterar senha, desativar usuário ou modificar seu perfil. Alterações exigem o token CSRF da sessão. O antigo cabeçalho `x-admin-token` não autoriza operações.
 
-Para Vercel, mantenha as variáveis do banco, o `ADMIN_TOKEN` e as opções de consulta no ambiente do projeto. A API está disponível em `/api`. Alterações locais precisam ser publicadas para aparecer na versão hospedada.
+No primeiro uso local, inicie `npm start` e use o código de primeiro acesso exibido no terminal para criar o administrador. Não há usuário ou senha padrão. Na hospedagem, configure `AUTH_SETUP_TOKEN` como um segredo exclusivo antes da primeira implantação. Um `ADMIN_TOKEN` antigo pode servir somente como código inicial durante a transição; não funciona como login compartilhado. Depois de existir um usuário, o cadastro inicial fica bloqueado. Os usuários seguintes são criados em **Configurações → Usuários e permissões**.
+
+Perfis: operador registra entradas, saídas e recebimentos; supervisor também administra mensalistas, cancela entradas com justificativa e gerencia fechamento; financeiro consulta valores e recebe mensalidades; administrador também altera tarifas, usuários e backups. A atribuição dos recebimentos ao turno e a conferência de caixa são o passo 2, ainda pendente.
+
+Para Vercel, mantenha as variáveis do banco, o código inicial de configuração e as opções de consulta no ambiente do projeto. A API está disponível em `/api`. Sessões em produção exigem HTTPS. Origens adicionais, quando necessárias, devem ser explicitadas em `ALLOWED_ORIGINS`, separadas por vírgula. Alterações locais precisam ser publicadas para aparecer na versão hospedada.
+
+O fluxo de ativação por **GitHub → Vercel**, incluindo as variáveis de Production e o primeiro administrador, está em [PASSO_1_IMPLEMENTACAO.md](PASSO_1_IMPLEMENTACAO.md). O `vercel.json` inclui explicitamente o schema e as migrações SQL no pacote do backend.
 
 O limite por IP das rotas de consulta/reconhecimento é local à instância do servidor; não constitui uma cota global entre instâncias serverless.
 
@@ -85,7 +91,15 @@ npm run test:browser
 npm audit
 ```
 
-Os testes unitários e HTTP usam dados simulados e não acessam o banco real nem fornecedores. Os testes de navegador usam um servidor isolado, vídeo sintético e uma imagem de placa gerada para testar o Tesseract real. O navegador configurado é Microsoft Edge; ajuste `channel` em `playwright.config.js` se usar outro Chromium instalado.
+Os testes de segurança e os testes de navegador usam a aplicação real com PostgreSQL isolado em memória por PGlite, sem conexão ao banco operacional. Validam permissões, CSRF, cobrança, rollback, idempotência, backup e recibos, além de vídeo sintético e Tesseract real. Os testes dos fornecedores usam respostas simuladas. O navegador configurado é Microsoft Edge; ajuste `channel` em `playwright.config.js` se usar outro Chromium instalado.
+
+## Cobranças e impressão
+
+Novas entradas guardam a tarifa vigente e seu comprovante original. A saída recebe uma cotação do servidor válida por 2 minutos; o servidor valida o pagamento integral e grava baixa, parcelas e auditoria na mesma transação. Repetir a mesma confirmação não duplica recebimentos. A diária corresponde a cada período iniciado de 24 horas. Para mensalista, entrada gratuita exige cadastro ativo com vencimento válido; mensalidades são recebidas pelo valor da tabela do servidor, sem desconto livre no navegador.
+
+Entrada, saída e mensalidade possuem impressão em **80 mm e 58 mm**, com seleção no próprio comprovante. O layout usa margens pequenas, linhas compactas e altura calculada conforme o conteúdo, preservando identificação, valores, horários, pagamento e QR de entrada. A preferência de largura fica neste navegador. Configure a impressora na mesma largura e desative cabeçalhos/rodapés do navegador; o avanço/corte físico depende do driver e da impressora.
+
+O backup operacional atual é completo e versionado; a restauração exige administrador, sua senha e a confirmação `RESTAURAR`, valida todas as tabelas antes de substituir registros e realinha sequências. Usuários, senhas, sessões e cotações temporárias não fazem parte do arquivo. Credenciais de acesso precisam de procedimento de recuperação separado. Arquivos antigos sem versão não são aceitos para restauração automática. Limite de requisição: 10 MB, sujeito também aos limites da hospedagem. Backup automático e contingência continuam previstos no passo 4.
 
 O relatório inicial está em `ANALISE_TECNICA.md`; ele descreve o estado anterior às correções desta implementação.
 

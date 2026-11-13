@@ -16,10 +16,9 @@
         signal?.addEventListener('abort', abort, { once: true });
         const timer = setTimeout(abort, timeout);
         try {
-            const headers = new Headers(options.headers || {});
-            const token = localStorage.getItem('adminToken');
-            if (token) headers.set('x-admin-token', token);
-            const response = await fetch(`${baseUrl()}${path}`, { ...options, headers, signal: controller.signal });
+            const headers = window.AuthService?.headers(options.headers) || new Headers(options.headers || {});
+            const response = await fetch(`${baseUrl()}${path}`, { ...options, credentials: 'include', headers, signal: controller.signal });
+            if (response.status === 401) window.AuthService?.expire();
             const data = await response.json().catch(() => null);
             if (!response.ok) return { encontrado: false, status: data?.status || 'unavailable', mensagem: data?.mensagem || data?.error || 'Serviço indisponível. Preencha manualmente.' };
             if (!data || typeof data !== 'object') return { encontrado: false, status: 'invalid_response', mensagem: 'Resposta inesperada do servidor.' };

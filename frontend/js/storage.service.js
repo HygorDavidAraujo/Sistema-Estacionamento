@@ -62,6 +62,9 @@
     }
 
     function replaceEntries(entries = []) {
+        // Após a migração o servidor é a fonte de verdade; não ressuscitar espelhos antigos.
+        const plates = new Set(entries.map(entry => normalizePlaca(entry.placa)));
+        Object.keys(localStorage).filter(key => /^[A-Z]{3}\d[A-Z0-9]\d{2}$/.test(key) && !plates.has(key)).forEach(key => localStorage.removeItem(key));
         const normalized = entries.map((entry) => ({ ...entry, placa: normalizePlaca(entry.placa) }));
         persist(normalized);
         normalized.forEach(mirrorLegacy);
@@ -141,6 +144,10 @@
     }
 
     window.StorageService = {
+        clearOperationalData() {
+            localStorage.removeItem(STORAGE_KEY);
+            Object.keys(localStorage).filter(key => /^[A-Z]{3}\d[A-Z0-9]\d{2}$/.test(key) || key.startsWith('ent-')).forEach(key => localStorage.removeItem(key));
+        },
         generateEntryId,
         saveEntry,
         upsertEntry,

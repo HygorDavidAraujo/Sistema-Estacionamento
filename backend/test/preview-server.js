@@ -1,22 +1,19 @@
-// Ambiente de teste: sem dotenv, banco ou consultas externas.
-import express from 'express';
-import { resolve } from 'node:path';
-import { createPlateRouter } from '../routes/plates.js';
-
-const app = express();
-app.use(express.json());
-app.use('/frontend', express.static(resolve('../frontend')));
-app.get('/', (_req, res) => res.sendFile(resolve('../index.html')));
-app.use(createPlateRouter({ env: {}, fetchImpl: async url => Response.json({ brand: 'MARCA TESTE', model: url.includes('DEF4G56') ? 'VEÍCULO B' : 'VEÍCULO A', color: 'Cinza' }) }));
-app.get('/configuracoes', (_req, res) => res.json({ success: true, dados: Object.fromEntries(Object.entries({ valor_hora_inicial: '5', valor_hora_adicional: '2.5', tempo_tolerancia: '15', total_vagas: '50' }).map(([key, valor]) => [key, { valor }])) }));
-app.get('/patio/ativos', (_req, res) => res.json({ success: true, dados: [] }));
-app.get('/dashboard', (_req, res) => res.json({ success: true, dados: { total_vagas: 50, vagas_ocupadas: 0, vagas_disponiveis: 50, percentual_ocupacao: 0 } }));
-app.get('/caixa/dashboard', (_req, res) => res.json({ success: true, dados: { total_recebido: 0, total_dinheiro: 0, total_credito: 0, total_debito: 0, total_pix: 0, total_transacoes: 0 } }));
-app.get('/caixa/turnos/atual', (_req, res) => res.json({ success: true, dados: null }));
-app.get('/mensalistas/:placa', (_req, res) => res.status(404).json({ success: false }));
-app.post('/entrada', (_req, res) => res.json({ success: true, entry_id: 'test-entry' }));
-app.post('/__shutdown', (_req, res) => {
-    res.end('ok');
-    setImmediate(() => { server.closeAllConnections(); server.close(); });
+// Aplicação real com PostgreSQL em memória; sem .env ou banco operacional.
+import { createApp } from '../app.js';
+import { hashPassword } from '../services/auth.js';
+import { testDatabase } from './test-database.js';
+const { db,pg } = await testDatabase();
+await db.query('INSERT INTO usuarios (login,nome,perfil,senha_hash) VALUES ($1,$2,$3,$4)', ['teste','Operador de teste','administrador',await hashPassword('Senha-teste-123')]);
+const app=createApp({db,env:{NODE_ENV:'test'},plateFetch:async url=>Response.json({brand:'MARCA TESTE',model:url.includes('DEF4G56')?'VEÍCULO B':'VEÍCULO A',color:'Cinza'})});
+// Preparação exclusiva deste servidor isolado, sem equivalente na aplicação real.
+app.post('/__test/prepare',async (req,res)=>{
+    const { placa,minutes=65,mensalista=false }=req.body;
+    if(!/^[A-Z]{3}\d[A-Z0-9]\d{2}$/.test(placa)) return res.sendStatus(400);
+    if(mensalista) await db.query("INSERT INTO mensalistas (placa,nome,vencimento) VALUES ($1,'Cliente de teste','2099-01-31') ON CONFLICT (placa) DO UPDATE SET ativo=true,vencimento='2099-01-31'",[placa]);
+    else await db.query("UPDATE historico SET criado_em=NOW()-($1::int * INTERVAL '1 minute') WHERE placa=$2 AND status='ativo'",[minutes,placa]);
+    res.json({success:true});
 });
-const server = app.listen(3108, '127.0.0.1', () => console.log('Preview de teste: http://127.0.0.1:3108'));
+app.post('/__shutdown',(_req,res)=>{
+    res.end('ok'); setImmediate(async()=>{server.closeAllConnections();server.close();await pg.close();});
+});
+const server=app.listen(3108,'127.0.0.1',()=>console.log('Preview de teste: http://127.0.0.1:3108'));

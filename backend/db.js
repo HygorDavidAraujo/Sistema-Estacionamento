@@ -105,6 +105,8 @@ export async function initDb() {
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_turnos_data ON caixa_turnos(data_ref)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_caixa_turnos_aberto ON caixa_turnos(aberto_em)`);
+    // Migração aditiva: nenhum registro operacional existente é removido.
+    await pool.query(await fs.readFile(resolve(__dirname, 'migrations/001-security.sql'), 'utf8'));
     console.log("[BACK] Schema aplicado com sucesso");
 }
 

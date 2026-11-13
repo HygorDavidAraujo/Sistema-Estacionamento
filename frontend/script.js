@@ -2,15 +2,12 @@
 const IS_LOCAL_ENV = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:';
 let BACKEND_BASE = window.BACKEND_BASE || (IS_LOCAL_ENV ? 'http://localhost:3000' : `${location.origin}/api`);
 
-function getAuthToken() {
-    return localStorage.getItem('adminToken') || '';
-}
-
-function apiFetch(url, options = {}) {
-    const token = getAuthToken();
-    const headers = new Headers(options.headers || {});
-    if (token) headers.set('x-admin-token', token);
-    return fetch(url, { ...options, headers });
+function apiFetch(url, options = {}) { return AuthService.fetch(url,options); }
+async function operationRequest(path, body) {
+    const res = await apiFetch(`${BACKEND_BASE}${path}`,{ method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'Não foi possível concluir a operação');
+    return data;
 }
 
 function timeoutSignal(ms) {
@@ -26,22 +23,29 @@ function timeoutSignal(ms) {
 }
 
 async function detectBackendPort(startPort = 3000, maxPort = 3005) {
+    const host = location.hostname === '127.0.0.1' ? '127.0.0.1' : 'localhost';
+    if (location.protocol !== 'file:') {
+        try {
+            const current = await fetch(`${location.origin}/health`,{signal:timeoutSignal(1500)});
+            if(current.ok && (await current.json()).service === 'estacionamento') return location.origin;
+        } catch { /* Procura uma porta local se a interface estiver em outro servidor. */ }
+    }
     for (let port = startPort; port <= maxPort; port++) {
         try {
-            const res = await fetch(`http://localhost:${port}/health`, {
+            const res = await fetch(`http://${host}:${port}/health`, {
                 method: 'GET',
                 signal: timeoutSignal(1500)
             });
             if (res.ok && (await res.json()).service === 'estacionamento') {
                 console.log(`[front] Backend detectado na porta ${port}`);
-                return `http://localhost:${port}`;
+                return `http://${host}:${port}`;
             }
         } catch (e) {
             // Continua tentando próxima porta
         }
     }
     console.warn('[front] Backend não encontrado em portas 3000-3005, usando 3000 como padrão');
-    return 'http://localhost:3000';
+    return `http://${host}:3000`;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -52,21 +56,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateAuthButton();
     StorageService.migrateLegacyEntries?.();
     bindUI();
-    await loadConfig(); // Aguarda carregamento das configurações do banco
-    await syncActiveEntriesFromBackend();
-    carregarDashboard(); // Carrega dashboard de vagas
-    carregarDashboardCaixa(); // Carrega dashboard de caixa
-    carregarTurnoAtual(); // Carrega status do turno
-    updatePatioCarList();
+    ReceiptService.bind();
+    window.onSessionStarted = async () => {
+        await loadConfig();
+        await syncActiveEntriesFromBackend();
+        await carregarDashboard();
+        if (['supervisor','financeiro','administrador'].includes(AuthService.user?.perfil)) await carregarDashboardCaixa();
+        if (AuthService.user?.perfil !== 'financeiro') await carregarTurnoAtual();
+        updatePatioCarList();
+    };
+    window.onSessionEnded = () => { turnoAtualCache = null; window.mensalistaEditId = null; restoreCandidate = null; };
+    if (await AuthService.initialize()) await window.onSessionStarted();
     // atualiza tempos no pátio, dashboard vagas e caixa a cada 10s
     let refreshing = false;
     setInterval(async () => {
-        if (refreshing || document.hidden) return;
+        if (refreshing || document.hidden || !AuthService.user) return;
         refreshing = true;
         try {
             await syncActiveEntriesFromBackend();
             updatePatioCarList();
-            await Promise.allSettled([carregarDashboard(), carregarDashboardCaixa(), carregarTurnoAtual()]);
+            await Promise.allSettled([carregarDashboard(),
+                ['supervisor','financeiro','administrador'].includes(AuthService.user?.perfil) ? carregarDashboardCaixa() : null,
+                AuthService.user?.perfil !== 'financeiro' ? carregarTurnoAtual() : null]);
         } finally { refreshing = false; }
     }, 10000);
 });
@@ -156,7 +167,7 @@ function getEntryPricing(entry, horaSaida = new Date()) {
         return { tempoFormatado, total: 0, horaEntrada, horaSaida, tipo: 'mensalista' };
     }
     if (entry.diarista) {
-        return { tempoFormatado, total: valorDiaria || 0, horaEntrada, horaSaida, tipo: 'diarista' };
+        return { tempoFormatado, total: (valorDiaria || 0) * Math.max(1,Math.ceil(Math.max(0,horaSaida-horaEntrada)/86400000)), horaEntrada, horaSaida, tipo: 'diarista' };
     }
     return { tempoFormatado, total, horaEntrada, horaSaida, tipo: 'avulso' };
 }
@@ -272,7 +283,10 @@ function addMonthsToISODateFront(baseDateStr, months) {
         const now = new Date();
         dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     }
-    dt.setUTCMonth(dt.getUTCMonth() + (Number(months) || 0));
+    const originalDay = dt.getUTCDate();
+    dt.setUTCDate(1); dt.setUTCMonth(dt.getUTCMonth() + (Number(months) || 0));
+    const lastDay = new Date(Date.UTC(dt.getUTCFullYear(),dt.getUTCMonth()+1,0)).getUTCDate();
+    dt.setUTCDate(Math.min(originalDay,lastDay));
     return dt.toISOString().slice(0, 10);
 }
 
@@ -506,6 +520,8 @@ function bindUI() {
         carregarMensalistas();
     };
     document.getElementById('btnAuth').onclick = handleAuthClick;
+    document.getElementById('restoreForm').addEventListener('submit',confirmarRestore);
+    document.body.addEventListener('click',event=>{const button=event.target.closest('[data-operation-receipt]');if(button)abrirComprovanteOperacao(button.dataset.operationReceipt);});
 
     document.getElementById('registrarBtn').onclick = registrarEntrada;
     document.getElementById('calcularBtn').onclick = calcularPermanencia;
@@ -523,8 +539,6 @@ function bindUI() {
 
     QrReaderService.bindKeyboardInput(document.getElementById('qrSaidaInput'), tratarQrCodeSaida);
 
-    document.getElementById('printEntradaBtn')?.addEventListener('click', () => printHtml(document.getElementById('comprovanteEntrada').innerHTML));
-    document.getElementById('printPermanenciaBtn')?.addEventListener('click', () => printHtml(document.getElementById('comprovantePermanencia').innerHTML));
 
     document.getElementById('btnRelatorioResumo')?.addEventListener('click', carregarRelatorioResumo);
     document.getElementById('btnHistoricoCompleto')?.addEventListener('click', carregarHistoricoCompleto);
@@ -632,7 +646,7 @@ function bindUI() {
             const entryId = printBtn.dataset.entryId;
             const entry = StorageService.getEntryById(entryId);
             if (!entry) return alert('Entrada não encontrada.');
-            renderComprovanteEntrada(entry);
+            await renderComprovanteEntrada(entry);
             openPopup('comprovanteEntradaPopup');
             return;
         }
@@ -642,10 +656,11 @@ function bindUI() {
             if (!entryId) return alert('ID da entrada não informado.');
             const confirmCancel = window.confirm('Confirma cancelar esta entrada?\n\nA ação NÃO gerará cobrança.');
             if (!confirmCancel) return;
-            const motivo = window.prompt('Motivo do cancelamento (opcional):', 'Cancelamento solicitado pelo usuário');
+            const motivo = window.prompt('Motivo do cancelamento (10 a 255 caracteres):', '');
+            if (!motivo || motivo.trim().length < 10) return notify('Informe um motivo de ao menos 10 caracteres.','error');
             const ok = await cancelEntry({
                 entryId,
-                motivo: (motivo || '').trim() || 'Cancelamento solicitado pelo usuário'
+                motivo: motivo.trim()
             });
             if (ok) {
                 closePopup('cancelEntryPopup');
@@ -708,26 +723,8 @@ function closePopupByElement(el) {
 }
 function toggleMenu(show) { const el = document.getElementById('menu'); if (!el) return; el.setAttribute('aria-hidden', show ? 'false' : 'true'); }
 
-function updateAuthButton() {
-    const btn = document.getElementById('btnAuth');
-    if (!btn) return;
-    btn.textContent = getAuthToken() ? 'Sair' : 'Acesso';
-}
-
-function handleAuthClick() {
-    const token = getAuthToken();
-    if (token) {
-        localStorage.removeItem('adminToken');
-        updateAuthButton();
-        notify('Acesso removido.', 'success');
-        return;
-    }
-    const input = prompt('Informe o token de acesso:');
-    if (!input) return;
-    localStorage.setItem('adminToken', input.trim());
-    updateAuthButton();
-    notify('Acesso aplicado.', 'success');
-}
+function updateAuthButton() { window.AuthService?.applyPermissions(); }
+function handleAuthClick() { return AuthService.access(); }
 
 function mapBackendEntryToLocal(row) {
     const dateIso = row.data_entrada_iso || '';
@@ -763,6 +760,7 @@ async function syncActiveEntriesFromBackend() {
         const entries = data.dados.map(mapBackendEntryToLocal);
         StorageService.replaceEntries(entries);
         setConnectionStatus('Sincronizado', 'online');
+        AuthService.applyPermissions();
         return true;
     } catch (err) {
         setConnectionStatus('Sem conexão', 'offline');
@@ -807,6 +805,7 @@ async function loadConfig() {
         const data = await res.json();
         if (data.success && data.dados) {
             const configs = data.dados;
+            for (const [key,id] of [['nome_estacionamento','nomeEstacionamento'],['documento_estacionamento','documentoEstacionamento'],['endereco_estacionamento','enderecoEstacionamento'],['telefone_estacionamento','telefoneEstacionamento']]) document.getElementById(id).value = configs[key]?.valor || '';
             
             // Atualiza campos do formulário
             if (configs.valor_hora_inicial) {
@@ -873,6 +872,10 @@ async function saveConfig() {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                nome_estacionamento:document.getElementById('nomeEstacionamento').value.trim(),
+                documento_estacionamento:document.getElementById('documentoEstacionamento').value.trim(),
+                endereco_estacionamento:document.getElementById('enderecoEstacionamento').value.trim(),
+                telefone_estacionamento:document.getElementById('telefoneEstacionamento').value.trim(),
                 valor_hora_inicial: v1,
                 valor_hora_adicional: v2,
                 tempo_tolerancia: tol,
@@ -945,160 +948,37 @@ function clearEntradaForm() {
 ///////////////////////////
 // registrar entrada
 ///////////////////////////
+let entradaBusy = false;
 async function registrarEntrada() {
+    if (entradaBusy) return;
     const placa = normalizePlaca(document.getElementById('placaEntrada').value);
-    const marca = document.getElementById('marcaEntrada').value.trim();
-    const modelo = document.getElementById('modeloEntrada').value.trim();
-    const cor = document.getElementById('corEntrada').value.trim();
-    const mensalista = document.getElementById('mensalistaCheck').checked;
-    const diarista = document.getElementById('diaristaCheck').checked;
-    const clienteNome = document.getElementById('mensalistaNome').value.trim();
-    const clienteTelefone = document.getElementById('mensalistaTelefone').value.trim();
-    const clienteCpf = document.getElementById('mensalistaCpf').value.trim();
-
-    if (!isValidPlaca(placa)) { alert('Placa inválida. Use formato AAA1234 ou AAA1A23.'); return; }
-    if (!placa) { alert('Informe a placa.'); return; }
-    if (mensalista && diarista) { alert('Selecione apenas Mensalista ou Diária.'); return; }
-    if (mensalista && (!clienteNome || !clienteTelefone || !clienteCpf)) {
-        alert('Informe nome, telefone e CPF do mensalista.');
-        return;
-    }
-
-    let existingEntry = StorageService.getEntryByPlate(placa);
-    if (existingEntry) {
-        // Confirma com o backend caso o cache local esteja desatualizado
-        try {
-            const backendEntry = await fetchActiveEntryFromBackend({ placa });
-            if (!backendEntry) {
-                // Cache local possivelmente stale: remove e prossegue com o registro
-                StorageService.removeEntry(existingEntry.entryId);
-                existingEntry = null;
-            } else {
-                const entradaAnterior = new Date(backendEntry.horaEntradaMs || backendEntry.horaEntrada).toLocaleString();
-                alert(`Este veículo já está no pátio desde ${entradaAnterior}. Não é possível registrar novamente.`);
-                return;
-            }
-        } catch (err) {
-            // Em caso de falha na verificação, assume comportamento conservador: avisa o usuário
-            const entradaAnterior = new Date(existingEntry.horaEntradaMs || existingEntry.horaEntrada).toLocaleString();
-            alert(`Este veículo já está no pátio desde ${entradaAnterior}. Não é possível registrar novamente.`);
-            return;
-        }
-    }
-
-    const now = new Date();
-    const entrada = {
-        entryId: StorageService.generateEntryId(),
-        placa,
-        marca,
-        modelo,
-        cor,
-        horaEntrada: now.toISOString(),
-        horaEntradaMs: now.getTime(),
-        mensalista,
-        diarista,
-        cliente_nome: clienteNome,
-        cliente_telefone: clienteTelefone,
-        cliente_cpf: clienteCpf
-    };
-
-    // Salva no backend (banco de dados)
-    apiFetch(`${BACKEND_BASE}/entrada`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            placa,
-            marca,
-            modelo,
-            cor,
-            entryId: entrada.entryId,
-            mensalista,
-            diarista,
-            cliente_nome: clienteNome,
-            cliente_telefone: clienteTelefone,
-            cliente_cpf: clienteCpf
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (!data.success) {
-            alert('Erro ao registrar entrada: ' + (data.error || data.mensagem || 'Desconhecido'));
-            return;
-        }
-        
-        // salva cache local (vehicleDB) e entrada
-        saveVehicleInfo(placa, marca, modelo, cor);
-        StorageService.saveEntry(entrada);
-
-        updatePatioCarList();
-        carregarDashboard();
-        clearEntradaForm();
-        fecharCameraEntrada();
-        closePopup('entradaPopup');
-
-        // Busca valores atualizados do banco
-        const valorHora = localStorage.getItem('valorHora') || "5.00";
-        const valorHoraAdc = localStorage.getItem('valorHoraAdicional') || "2.50";
-        const tolerancia = localStorage.getItem('toleranciaHoraAdicional') || "15";
-
-        renderComprovanteEntrada(entrada);
-        openPopup('comprovanteEntradaPopup');
-    })
-    .catch(err => {
-        console.error('[front] erro ao registrar entrada:', err);
-        alert('Erro ao registrar entrada no servidor');
-    });
+    if (!isValidPlaca(placa)) return notify('Informe uma placa válida.','error');
+    entradaBusy = true; document.getElementById('registrarBtn').disabled = true;
+    try {
+        const body = { placa,marca:document.getElementById('marcaEntrada').value.trim(),modelo:document.getElementById('modeloEntrada').value.trim(),cor:document.getElementById('corEntrada').value.trim(),mensalista:document.getElementById('mensalistaCheck').checked,diarista:document.getElementById('diaristaCheck').checked };
+        const data = await operationRequest('/entrada',body);
+        const entrada = { ...body,entryId:data.entry_id,horaEntrada:data.criado_em,horaEntradaMs:new Date(data.criado_em).getTime(),comprovante:data.comprovante };
+        StorageService.saveEntry(entrada); saveVehicleInfo(placa,body.marca,body.modelo,body.cor);
+        updatePatioCarList(); await carregarDashboard(); clearEntradaForm(); fecharCameraEntrada(); closePopup('entradaPopup');
+        await renderComprovanteEntrada(entrada); openPopup('comprovanteEntradaPopup');
+    } catch (error) { notify(error.message,'error',6000); }
+    finally { entradaBusy = false; document.getElementById('registrarBtn').disabled = false; }
 }
 
-///////////////////////////
-// calcular permanência
-///////////////////////////
-function prepararPagamento(entry) {
-    if (!entry) {
-        alert('Entrada não localizada.');
-        return;
-    }
-
-    const { tempoFormatado, total, horaEntrada, horaSaida, tipo } = getEntryPricing(entry, new Date());
-
-    // Armazena dados temporários para o pagamento
-    window.dadosPagamento = {
-        entryId: entry.entryId,
-        placa: entry.placa,
-        marca: entry.marca,
-        modelo: entry.modelo,
-        horaEntrada: horaEntrada,
-        horaSaida: horaSaida,
-        tempo: tempoFormatado,
-        valor: total,
-        tipo
-    };
-
-    // Mostra resumo no modal de pagamento
-    document.getElementById('resumoPagamento').innerHTML = `
-        <h4>Resumo da Permanência</h4>
-        <p><b>Entrada:</b> <span>${horaEntrada.toLocaleString()}</span></p>
-        <p><b>Saída:</b> <span>${horaSaida.toLocaleString()}</span></p>
-        <p><b>Tempo:</b> <span>${tempoFormatado}</span></p>
-        <p><b>Veículo:</b> <span>${escapeHtml(entry.marca)} ${escapeHtml(entry.modelo)}</span></p>
-        <p><b>Placa:</b> <span>${escapeHtml(entry.placa)}</span></p>
-        <p><b>ID:</b> <span>${escapeHtml(entry.entryId)}</span></p>
-        <p><b>Tipo:</b> <span>${tipo === 'mensalista' ? 'Mensalista' : tipo === 'diarista' ? 'Diária' : 'Avulso'}</span></p>
-        <p class="valor-total"><b>Total a Pagar:</b> <span>R$ ${Number(total).toFixed(2)}</span></p>
-    `;
-
-    // Fecha modal de saída e abre modal de pagamento
-    closePopup('saidaPopup');
-
-    if (total > 0) {
-        resetSplitUI('splitPagamentoLista', 'splitPagamentoTotal', 'splitPagamentoRestante', total);
-        openPopup('pagamentoPopup');
-    } else {
-        processarSaida([]);
-    }
+async function prepararPagamento(entry) {
+    if (!entry) return notify('Entrada não localizada.','error');
+    try {
+        const { dados } = await operationRequest('/saida/cotacao',{ entryId:entry.entryId,placa:entry.placa });
+        window.dadosPagamento = { ...dados,entryId:dados.entry_id,valor:dados.valor,tempo:dados.tempo,horaEntrada:new Date(dados.entrada_em),horaSaida:new Date(dados.saida_em) };
+        document.getElementById('resumoPagamento').innerHTML = `<h4>Resumo da permanência</h4><p>Placa: <strong>${escapeHtml(dados.placa)}</strong></p><p>Entrada: ${escapeHtml(new Date(dados.entrada_em).toLocaleString('pt-BR'))}</p><p>Permanência: ${escapeHtml(dados.tempo)}</p><p>Tipo: ${escapeHtml(dados.tipo)}</p><p class="valor-total">Total: ${formatCurrency(dados.valor)}</p><p class="help-text">Valor confirmado pelo servidor. Cotação válida por 2 minutos.</p>`;
+        closePopup('saidaPopup');
+        if (dados.valor > 0) { resetSplitUI('splitPagamentoLista','splitPagamentoTotal','splitPagamentoRestante',dados.valor); openPopup('pagamentoPopup'); }
+        else await processarSaida([]);
+    } catch (error) { notify(error.message,'error',6000); }
 }
 
-///////////////////////////
+
+
 async function calcularPermanencia() {
     const placa = normalizePlaca(document.getElementById('placaSaida').value);
     if (!placa) return alert('Informe a placa.');
@@ -1134,84 +1014,26 @@ function confirmarPagamento() {
 ///////////////////////////
 // processar saída (após pagamento)
 ///////////////////////////
-function processarSaida(pagamentos = []) {
+let saidaBusy = false;
+async function processarSaida(pagamentos = []) {
     const dados = window.dadosPagamento;
-    
-    if (!dados) {
-        alert('Dados de pagamento não encontrados');
-        return;
-    }
-    
-    // Registra saída no backend
-    const pagamentosValidos = Array.isArray(pagamentos) ? pagamentos.filter(p => p.forma_pagamento && Number(p.valor_pago) > 0) : [];
-    const formaPagamento = pagamentosValidos.length === 1 ? pagamentosValidos[0].forma_pagamento : (pagamentosValidos.length > 1 ? 'Múltiplo' : null);
-
-    apiFetch(`${BACKEND_BASE}/saida`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            placa: dados.placa, 
-            entryId: dados.entryId,
-            valor_pago: dados.valor, 
-            tempo_permanencia: dados.tempo,
-            forma_pagamento: formaPagamento,
-            pagamentos: pagamentosValidos
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (!data.success) {
-            alert('Erro ao registrar saída: ' + (data.error || 'Desconhecido'));
-            return;
-        }
-        
-        // Remove do localStorage
-        StorageService.removeEntry(dados.entryId);
-        
-        // Gera comprovante
-        const pagamentosHtml = pagamentosValidos.length
-            ? `<p><b>Forma de Pagamento:</b> ${formaPagamento}</p>${pagamentosValidos.length > 1 ? `<ul>${pagamentosValidos.map(p => `<li>${p.forma_pagamento} - ${formatCurrency(p.valor_pago)}</li>`).join('')}</ul>` : ''}`
-            : '';
-
-        document.getElementById('comprovantePermanencia').innerHTML = `
-            <h3>✅ Comprovante de Saída</h3>
-            <p><b>ID da Entrada:</b> ${escapeHtml(dados.entryId)}</p>
-            <p><b>Placa:</b> ${escapeHtml(dados.placa)}</p>
-            <p><b>Veículo:</b> ${escapeHtml(dados.marca)} ${escapeHtml(dados.modelo)}</p>
-            <p><b>Entrada:</b> ${dados.horaEntrada.toLocaleString()}</p>
-            <p><b>Saída:</b> ${dados.horaSaida.toLocaleString()}</p>
-            <p><b>Tempo:</b> ${dados.tempo}</p>
-            <p><b>Tipo:</b> ${dados.tipo === 'mensalista' ? 'Mensalista' : dados.tipo === 'diarista' ? 'Diária' : 'Avulso'}</p>
-            <p><b>Valor:</b> R$ ${Number(dados.valor).toFixed(2)}</p>
-            ${pagamentosHtml}
-            <p style="margin-top:20px;font-size:12px;color:#666;">Obrigado pela preferência!</p>
-        `;
-        
-        // Fecha modal de pagamento e abre comprovante
-        closePopup('pagamentoPopup');
-        openPopup('comprovantePermanenciaPopup');
-        
-        // Limpa formulários
+    if (!dados || saidaBusy) return;
+    saidaBusy = true; document.getElementById('confirmarPagamentoBtn').disabled = true;
+    try {
+        const data = await operationRequest('/saida',{ cotacao_id:dados.cotacao_id,operacao_id:dados.operacao_id,pagamentos });
+        StorageService.removeEntry(data.entry_id);
+        await ReceiptService.render('comprovantePermanencia',data.comprovante);
+        closePopup('pagamentoPopup'); openPopup('comprovantePermanenciaPopup');
         document.getElementById('placaSaida').value = '';
-        resetSplitUI('splitPagamentoLista', 'splitPagamentoTotal', 'splitPagamentoRestante', 0);
-        
-        // Atualiza dashboards
-        updatePatioCarList();
-        carregarDashboard();
-        carregarDashboardCaixa();
-        
-        // Limpa dados temporários
-        delete window.dadosPagamento;
-    })
-    .catch(err => {
-        console.error('[front] erro ao registrar saída:', err);
-        alert('Erro ao registrar saída no servidor');
-    });
+        updatePatioCarList(); await carregarDashboard();
+        if (['supervisor','financeiro','administrador'].includes(AuthService.user?.perfil)) await carregarDashboardCaixa();
+        window.dadosPagamento = null;
+    } catch (error) { notify(error.message + ' Se a conexão caiu, tente confirmar novamente a mesma operação.','error',8000); }
+    finally { saidaBusy = false; document.getElementById('confirmarPagamentoBtn').disabled = false; }
 }
 
-///////////////////////////
-// saída pelo card do veículo
-///////////////////////////
+
+
 function registrarSaidaPeloCard(entryId) {
     const entrada = StorageService.getEntryById(entryId);
     if (!entrada) {
@@ -1324,7 +1146,7 @@ function updatePatioCarList() {
                          <p><b>Modelo:</b> ${escapeHtml(ent.modelo)}</p>
                          <p><b>Cor:</b> ${escapeHtml(ent.cor)}</p>
                          <p><b>Tempo no Pátio:</b> ${tempoFormatado}</p>
-                         <p><b>Valor Devido:</b> <span class="valor-devido">R$ ${total.toFixed(2)}</span></p>
+                         <p><b>Estimativa:</b> <span class="valor-devido">R$ ${total.toFixed(2)}</span></p>
                          <div class="card-actions">
                              <button class="btn-saida-card" data-entry-id="${escapeHtml(ent.entryId)}">Registrar Saída</button>
                              <button class="btn-cancel-card" data-entry-id="${escapeHtml(ent.entryId)}" title="Cancelar entrada">Cancelar</button>
@@ -1332,41 +1154,22 @@ function updatePatioCarList() {
                          </div>`;
         patio.appendChild(div);
     });
+    AuthService.applyPermissions();
 }
 
 ///////////////////////////
 // impressão
 ///////////////////////////
-function printHtml(html) {
-    const w = window.open('', '_blank', 'width=600,height=600');
-    w.document.write(`<html><head><title>Imprimir</title></head><body>${html}</body></html>`);
-    w.document.close();
-    setTimeout(()=>{ w.print(); w.close(); }, 300);
-}
-
-function renderComprovanteEntrada(entrada) {
+async function renderComprovanteEntrada(entrada) {
     if (!entrada) return;
-    const valorHora = localStorage.getItem('valorHora') || "5.00";
-    const valorHoraAdc = localStorage.getItem('valorHoraAdicional') || "2.50";
-    const tolerancia = localStorage.getItem('toleranciaHoraAdicional') || "15";
-    const tipo = entrada.mensalista ? 'Mensalista' : entrada.diarista ? 'Diária' : 'Avulso';
-    const entradaDate = new Date(entrada.horaEntradaMs || entrada.horaEntrada);
-
-    document.getElementById('comprovanteEntrada').innerHTML = `
-        <h3>Comprovante de Entrada</h3>
-        <p><b>Tipo:</b> ${tipo}</p>
-        <p><b>Entrada:</b> ${entradaDate.toLocaleString()}</p>
-        <p><b>1ª Hora:</b> R$ ${valorHora}</p>
-        <p><b>Hora Adicional:</b> R$ ${valorHoraAdc}</p>
-        <p><b>Tolerância:</b> ${tolerancia} min</p>
-        <div class="qr-area">
-            <div id="qrCodeEntrada"></div>
-            <p>Apresente este QR Code na saída.</p>
-        </div>
-    `;
-
-    QRCodeService.render('qrCodeEntrada', entrada.entryId, { size: 164 })
-        .catch(err => console.warn('[front] não foi possível gerar QR Code:', err));
+    let receipt = entrada.comprovante;
+    if (!receipt) {
+        const res = await apiFetch(`${BACKEND_BASE}/comprovantes/entrada/${encodeURIComponent(entrada.entryId)}`);
+        const data = await res.json();
+        if (!res.ok) { notify(data.error || 'Comprovante não encontrado','error'); return; }
+        receipt = data.dados;
+    }
+    await ReceiptService.render('comprovanteEntrada',receipt);
 }
 
 function formatTipoRegistro(row) {
@@ -1393,30 +1196,38 @@ async function exportarBackup() {
     }
 }
 
+let restoreCandidate = null;
 async function importarBackup(event) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    if (!confirm('Tem certeza? Essa ação substitui os dados atuais.')) return;
-
-    try {
-        const text = await file.text();
-        const payload = JSON.parse(text);
-        const res = await apiFetch(`${BACKEND_BASE}/restore`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (!res.ok) throw new Error('Erro ao restaurar backup');
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error || 'Erro ao restaurar backup');
-        alert('Backup restaurado com sucesso.');
-        await syncActiveEntriesFromBackend();
-        updatePatioCarList();
-        carregarDashboard();
-    } catch (err) {
-        alert('Falha ao restaurar backup: ' + err.message);
-    }
+    const file=event.target.files?.[0]; event.target.value='';
+    if(!file)return;
+    try{
+        if(file.size>10*1024*1024)throw new Error('O limite do arquivo é 10 MB.');
+        const payload=JSON.parse(await file.text());
+        if(payload.formato!=='estacionamento-operacional'||payload.versao!==1||!payload.tabelas)throw new Error('Selecione um backup operacional no formato atual.');
+        restoreCandidate=payload;
+        document.getElementById('restoreResumo').textContent=`Arquivo com ${Object.values(payload.tabelas).reduce((n,rows)=>n+(Array.isArray(rows)?rows.length:0),0)} registros. Confira se este é o backup desejado.`;
+        document.getElementById('restoreForm').reset();document.getElementById('restoreMessage').textContent='';
+        openPopup('restorePopup');
+    }catch(error){notify(error.message,'error',6000);}
+}
+async function confirmarRestore(event){
+    event.preventDefault();if(!restoreCandidate)return;
+    const button=document.getElementById('restoreSubmit');button.disabled=true;
+    try{
+        await operationRequest('/restore',{backup:restoreCandidate,confirmacao:document.getElementById('restoreConfirmacao').value,senha:document.getElementById('restoreSenha').value});
+        restoreCandidate=null;document.getElementById('restoreForm').reset();closePopup('restorePopup');
+        await window.onSessionStarted();notify('Backup restaurado com sucesso.','success');
+    }catch(error){document.getElementById('restoreMessage').textContent=error.message;}
+    finally{document.getElementById('restoreSenha').value='';button.disabled=false;}
+}
+async function abrirComprovanteOperacao(key){
+    try{
+        const res=await apiFetch(`${BACKEND_BASE}/comprovantes/operacao/${encodeURIComponent(key)}`);const data=await res.json();
+        if(!res.ok)throw new Error(data.error||'Comprovante não encontrado');
+        const monthly=data.dados.tipo==='mensalidade';
+        await ReceiptService.render(monthly?'comprovanteMensalidade':'comprovantePermanencia',data.dados);
+        openPopup(monthly?'comprovanteMensalidadePopup':'comprovantePermanenciaPopup');
+    }catch(error){notify(error.message,'error');}
 }
 
 function limparFormMensalista() {
@@ -1557,14 +1368,15 @@ async function carregarHistoricoMensalidade(row) {
         }
 
         let html = `<h5>${escapeHtml(row.nome)} - ${escapeHtml(row.placa)}</h5>`;
-        html += '<table><tr><th>Data</th><th>Hora</th><th>Forma</th><th>Valor</th><th>Obs.</th></tr>';
+        html += '<table><tr><th>Data</th><th>Hora</th><th>Forma</th><th>Valor</th><th>Obs.</th><th>Comprovante</th></tr>';
         lista.forEach((item) => {
             html += `<tr>
-                <td>${item.data_pagamento}</td>
-                <td>${item.hora_pagamento}</td>
-                <td>${item.forma_pagamento || '-'}</td>
+                <td>${escapeHtml(item.data_pagamento)}</td>
+                <td>${escapeHtml(item.hora_pagamento)}</td>
+                <td>${escapeHtml(item.forma_pagamento || '-')}</td>
                 <td>R$ ${Number(item.valor_pago || 0).toFixed(2)}</td>
-                <td>${item.observacao || '-'}</td>
+                <td>${escapeHtml(item.observacao || '-')}</td>
+                <td>${item.operacao_chave ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(item.operacao_chave)}">Reimprimir</button>` : 'Registro antigo'}</td>
             </tr>`;
         });
         html += '</table>';
@@ -1601,8 +1413,8 @@ function atualizarResumoMensalidade() {
 
     resumo.innerHTML = `
         <h4>Resumo da Mensalidade</h4>
-        <p><b>Mensalista:</b> <span>${window.mensalidadePagamento.nome}</span></p>
-        <p><b>Placa:</b> <span>${window.mensalidadePagamento.placa}</span></p>
+        <p><b>Mensalista:</b> <span>${escapeHtml(window.mensalidadePagamento.nome)}</span></p>
+        <p><b>Placa:</b> <span>${escapeHtml(window.mensalidadePagamento.placa)}</span></p>
         <p><b>Vencimento atual:</b> <span>${formatBrDate(vencAtual)}</span></p>
         <p class="valor-total"><b>Total a Pagar:</b> <span>${formatCurrency(total)}</span></p>
     `;
@@ -1623,6 +1435,7 @@ function abrirPagamentoMensalidade(row) {
         ativo: row.ativo !== false
     };
 
+    window.mensalidadePagamento.operacao_id = crypto.randomUUID();
     const valorMensal = parseFloat(localStorage.getItem('valorMensalidade') || '0');
     const inputValor = document.getElementById('mensalidadeValor');
     if (inputValor) inputValor.value = Number(valorMensal || 0).toFixed(2);
@@ -1636,60 +1449,26 @@ function abrirPagamentoMensalidade(row) {
     openPopup('mensalidadePagamentoPopup');
 }
 
+let mensalidadeBusy = false;
 async function confirmarPagamentoMensalidade() {
-    if (!window.mensalidadePagamento) return;
-    const total = getMensalidadeTotal();
-    const pagamentos = getSplitPayments('splitMensalidadeLista');
-
-    if (total <= 0) {
-        alert('Informe um valor válido para a mensalidade');
-        return;
-    }
-
-    if (pagamentos.length === 0) {
-        alert('Informe ao menos uma forma de pagamento');
-        return;
-    }
-    if (!validateSplitTotal(total, pagamentos)) {
-        alert('A soma das formas de pagamento precisa fechar o total da mensalidade');
-        return;
-    }
-
-    const meses = Math.max(1, parseInt(document.getElementById('mensalidadeMeses')?.value || '1', 10) || 1);
-    const observacao = document.getElementById('mensalidadeObservacao')?.value?.trim() || '';
-
+    const current = window.mensalidadePagamento;
+    if (!current || mensalidadeBusy) return;
+    const total = getMensalidadeTotal(); const pagamentos = getSplitPayments('splitMensalidadeLista');
+    if (total <= 0 || !validateSplitTotal(total,pagamentos)) return notify('Confira o total e as formas de pagamento.','error');
+    mensalidadeBusy = true; document.getElementById('confirmarMensalidadeBtn').disabled = true;
     try {
-        const res = await apiFetch(`${BACKEND_BASE}/mensalistas/pagamentos`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                mensalista_id: window.mensalidadePagamento.id,
-                placa: window.mensalidadePagamento.placa,
-                nome: window.mensalidadePagamento.nome,
-                meses,
-                observacao,
-                pagamentos
-            })
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-            throw new Error(data.error || 'Erro ao registrar pagamento');
-        }
-
-        closePopup('mensalidadePagamentoPopup');
-        alert(`Mensalidade registrada. Novo vencimento: ${formatBrDate(data.novo_vencimento)}`);
-        carregarMensalistas();
-        carregarDashboardCaixa();
-        carregarHistoricoMensalidade(window.mensalidadePagamento);
-        window.mensalidadePagamento = null;
-    } catch (err) {
-        alert('Falha ao registrar mensalidade: ' + err.message);
-    }
+        const data = await operationRequest('/mensalistas/pagamentos',{ mensalista_id:current.id,meses:Number(document.getElementById('mensalidadeMeses').value),observacao:document.getElementById('mensalidadeObservacao').value.trim(),pagamentos,operacao_id:current.operacao_id });
+        await ReceiptService.render('comprovanteMensalidade',data.comprovante);
+        closePopup('mensalidadePagamentoPopup'); openPopup('comprovanteMensalidadePopup');
+        await carregarMensalistas();
+        if (['supervisor','financeiro','administrador'].includes(AuthService.user?.perfil)) await carregarDashboardCaixa();
+        await carregarHistoricoMensalidade(current); window.mensalidadePagamento = null;
+    } catch (error) { notify(error.message,'error',6000); }
+    finally { mensalidadeBusy = false; document.getElementById('confirmarMensalidadeBtn').disabled = false; }
 }
 
-///////////////////////////
-// histórico e relatórios
-///////////////////////////
+
+
 function carregarRelatorioResumo() {
     const tipo = document.getElementById('filtroTipo')?.value || '';
     const params = new URLSearchParams();
@@ -1742,7 +1521,7 @@ function carregarHistoricoCompleto(filtros = {}) {
                 document.getElementById('historicoConteudo').innerHTML = '<p>Nenhum registro no histórico</p>';
                 return;
             }
-            let html = '<h4>Histórico Completo</h4><table><tr><th>Placa</th><th>Tipo</th><th>Marca/Modelo</th><th>Entrada</th><th>Saída</th><th>Tempo</th><th>Valor</th><th>Status</th></tr>';
+            let html = '<h4>Histórico Completo</h4><table><tr><th>Placa</th><th>Tipo</th><th>Marca/Modelo</th><th>Entrada</th><th>Saída</th><th>Tempo</th><th>Valor</th><th>Status</th><th>Comprovante</th></tr>';
             data.dados.forEach(row => {
                 html += `<tr>
                     <td>${escapeHtml(row.placa)}</td>
@@ -1750,9 +1529,10 @@ function carregarHistoricoCompleto(filtros = {}) {
                     <td>${escapeHtml(row.marca)} ${escapeHtml(row.modelo)}</td>
                     <td>${row.data_entrada} ${row.hora_entrada}</td>
                     <td>${row.data_saida || '-'} ${row.hora_saida || '-'}</td>
-                    <td>${row.tempo_permanencia || '-'}</td>
+                    <td>${escapeHtml(row.tempo_permanencia || '-')}</td>
                     <td>R$ ${Number(row.valor_pago || 0).toFixed(2)}</td>
-                    <td>${row.status}</td>
+                    <td>${escapeHtml(row.status)}</td>
+                    <td>${row.operacao_id ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.operacao_id)}">Reimprimir</button>` : '-'}</td>
                 </tr>`;
             });
             html += '</table>';
@@ -1808,7 +1588,7 @@ function buscarPorPlaca() {
                 document.getElementById('historicoConteudo').innerHTML = '<p>Nenhum registro encontrado para placa: ' + placaNorm + '</p>';
                 return;
             }
-            let html = '<h4>Histórico da Placa: ' + placaNorm + '</h4><table><tr><th>Tipo</th><th>Data Entrada</th><th>Hora Entrada</th><th>Data Saída</th><th>Hora Saída</th><th>Tempo</th><th>Valor</th><th>Status</th></tr>';
+            let html = '<h4>Histórico da Placa: ' + placaNorm + '</h4><table><tr><th>Tipo</th><th>Data Entrada</th><th>Hora Entrada</th><th>Data Saída</th><th>Hora Saída</th><th>Tempo</th><th>Valor</th><th>Status</th><th>Comprovante</th></tr>';
             data.dados.forEach(row => {
                 html += `<tr>
                     <td>${formatTipoRegistro(row)}</td>
@@ -1816,9 +1596,10 @@ function buscarPorPlaca() {
                     <td>${row.hora_entrada}</td>
                     <td>${row.data_saida || '-'}</td>
                     <td>${row.hora_saida || '-'}</td>
-                    <td>${row.tempo_permanencia || '-'}</td>
+                    <td>${escapeHtml(row.tempo_permanencia || '-')}</td>
                     <td>R$ ${Number(row.valor_pago || 0).toFixed(2)}</td>
-                    <td>${row.status}</td>
+                    <td>${escapeHtml(row.status)}</td>
+                    <td>${row.operacao_id ? `<button class="btn-ghost" data-operation-receipt="${escapeHtml(row.operacao_id)}">Reimprimir</button>` : '-'}</td>
                 </tr>`;
             });
             html += '</table>';
@@ -2005,7 +1786,7 @@ function renderHistoricoFechamentos(dados) {
             <td>${formatCurrency(item.total_debito)}</td>
             <td>${formatCurrency(item.total_pix)}</td>
             <td>${Number(item.total_transacoes || 0)}</td>
-            <td>${item.observacao || '-'}</td>
+            <td>${escapeHtml(item.observacao || '-')}</td>
             <td>${formatDateTimeBr(item.criado_em)}</td>
         </tr>
     `).join('');
@@ -2288,7 +2069,7 @@ async function gerarRelatorioCaixa() {
                 html += `
                     <tr>
                         <td>${item.data_saida}</td>
-                        <td>${item.forma_pagamento}</td>
+                        <td>${escapeHtml(item.forma_pagamento)}</td>
                         <td style="text-align:center">${item.quantidade}</td>
                         <td style="text-align:right">R$ ${Number(item.total).toFixed(2)}</td>
                     </tr>
