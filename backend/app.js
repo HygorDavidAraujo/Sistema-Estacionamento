@@ -14,8 +14,9 @@ import { createAuth } from './services/auth.js';
 import { createOperationsRouter } from './routes/operations.js';
 import { createBackupRouter } from './routes/backup.js';
 import { OperationError, audit, cents, fail } from './services/financial-domain.js';
+import { createDatabaseReadiness, initializationFailure } from './services/database-readiness.js';
 
-export function createApp({ db, env = process.env, setupToken = env.AUTH_SETUP_TOKEN || env.ADMIN_TOKEN || '', clock, plateFetch } = {}) {
+export function createApp({ db, env = process.env, setupToken = env.AUTH_SETUP_TOKEN || env.ADMIN_TOKEN || '', clock, plateFetch, readinessOptions = {} } = {}) {
 const { initDb, query, tx } = db;
 const app = express();
 const requestIdentity = new AsyncLocalStorage();
@@ -67,7 +68,14 @@ function normalizeDateParam(value) {
     return str;
 }
 
-const ready = async () => { await dbReady; return databaseReady; };
+const { ready } = createDatabaseReadiness({
+    initialize: initDb,
+    ...readinessOptions,
+    onError: error => console.error('[BACK] Falha ao preparar banco:', initializationFailure(error))
+});
+async function ensureDatabase() {
+    if (!await ready()) throw new OperationError('Banco de dados indisponível. Tente novamente em instantes.', 503);
+}
 const { router: authRouter, requireAuth, allow } = createAuth({ query, tx, ready, env, setupToken });
 app.use('/auth', authRouter);
 
@@ -81,12 +89,6 @@ async function logAudit(acao, detalhes = {}) {
         console.warn('[BACK] Falha ao registrar auditoria:', err.message);
     }
 }
-
-let databaseReady = false;
-const dbReady = initDb().then(() => { databaseReady = true; }).catch((err) => {
-    console.error("[BACK] Falha ao inicializar schema:", err);
-});
-
 
 const APP_TIMEZONE = env.APP_TIMEZONE || 'America/Sao_Paulo';
 
@@ -178,7 +180,7 @@ function addMonthsToISODate(baseDateStr, months) {
 // Consultas e reconhecimento independentes do fluxo financeiro.
 app.use(createPlateRouter({
     env, fetchImpl: plateFetch,
-    repository: createVehicleRepository(query, async () => { await dbReady; return databaseReady; }),
+    repository: createVehicleRepository(query, ready),
     auth: requireAuth
 }));
 
@@ -204,7 +206,7 @@ app.use(createBackupRouter({ tx, allow }));
 // ROTA PARA LISTAR VEÍCULOS ATIVOS NO PÁTIO
 app.get("/patio/ativos", async (req, res) => {
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `SELECT
                 id,
@@ -245,7 +247,7 @@ app.get("/patio/ativo", async (req, res) => {
     }
 
     try {
-        await dbReady;
+        await ensureDatabase();
                 const result = await query(
                         `SELECT
                                 id,
@@ -368,7 +370,7 @@ app.get("/historico", async (req, res) => {
     sql += ` ORDER BY criado_em DESC`;
     
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(sql, params);
         res.json({ success: true, dados: result.rows || [] });
     } catch (err) {
@@ -381,7 +383,7 @@ app.get("/historico", async (req, res) => {
 app.get("/historico/:placa", async (req, res) => {
     const placa = sanitizePlate(req.params.placa);
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `SELECT
                 id,
@@ -419,7 +421,7 @@ app.get("/historico/:placa", async (req, res) => {
 app.get("/relatorio/resumo", async (req, res) => {
     const { tipo } = req.query;
     try {
-        await dbReady;
+        await ensureDatabase();
         let where = '';
         const params = [];
         if (tipo === 'mensalista') {
@@ -459,7 +461,7 @@ app.get("/caixa/dashboard", async (req, res) => {
     const hoje = formatDateLocal(new Date());
 
     try {
-        await dbReady;
+        await ensureDatabase();
         const dados = await getCaixaResumoPorData(hoje);
         res.json({ success: true, dados });
     } catch (err) {
@@ -516,7 +518,7 @@ app.get("/caixa/relatorio", async (req, res) => {
     sql += ` GROUP BY data_ref, forma_pagamento ORDER BY data_ref DESC, forma_pagamento`;
     
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(sql, params);
         res.json({ success: true, dados: result.rows || [] });
     } catch (err) {
@@ -537,7 +539,7 @@ app.post("/caixa/fechamento", requireAuth, async (req, res) => {
     if (force && observacao?.length < 10 || force && !observacao) return res.status(400).json({ error: 'Informe justificativa de ao menos 10 caracteres' });
 
     try {
-        await dbReady;
+        await ensureDatabase();
 
         const existente = await query(`SELECT id FROM caixa_fechamentos WHERE data_ref = $1`, [data_ref]);
         if (existente.rows?.[0] && !force) {
@@ -606,7 +608,7 @@ app.get("/caixa/fechamentos", requireAuth, async (req, res) => {
     sql += ` ORDER BY data_ref DESC`;
 
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(sql, params);
         res.json({ success: true, dados: result.rows || [] });
     } catch (err) {
@@ -618,7 +620,7 @@ app.get("/caixa/fechamentos", requireAuth, async (req, res) => {
 // TURNOS DE CAIXA
 app.get("/caixa/turnos/atual", requireAuth, async (req, res) => {
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `SELECT
                 id,
@@ -644,7 +646,7 @@ app.post("/caixa/turnos/abrir", requireAuth, async (req, res) => {
     const data_ref = normalizeDateParam(req.body?.data_ref) || formatDateLocal(new Date());
 
     try {
-        await dbReady;
+        await ensureDatabase();
         const aberto = await query(
             `SELECT id FROM caixa_turnos WHERE fechado_em IS NULL ORDER BY aberto_em DESC LIMIT 1`
         );
@@ -673,7 +675,7 @@ app.post("/caixa/turnos/fechar", requireAuth, async (req, res) => {
     const turnoId = req.body?.turno_id ? Number(req.body.turno_id) : null;
 
     try {
-        await dbReady;
+        await ensureDatabase();
         let turno;
         if (turnoId) {
             const result = await query(
@@ -747,7 +749,7 @@ app.get("/caixa/turnos", requireAuth, async (req, res) => {
     sql += ` ORDER BY aberto_em DESC`;
 
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(sql, params);
         return res.json({ success: true, dados: result.rows || [] });
     } catch (err) {
@@ -760,7 +762,7 @@ app.get("/caixa/turnos", requireAuth, async (req, res) => {
 // ROTA PARA OBTER DASHBOARD DE VAGAS
 app.get("/dashboard", async (req, res) => {
     try {
-        await dbReady;
+        await ensureDatabase();
         // Busca o total de vagas configurado
         const configResult = await query(
             `SELECT valor FROM configuracoes WHERE chave = $1`,
@@ -794,7 +796,7 @@ app.get("/dashboard", async (req, res) => {
 // ROTA PARA OBTER TODAS AS CONFIGURAÇÕES
 app.get("/configuracoes", async (req, res) => {
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `SELECT * FROM configuracoes ORDER BY chave`,
             []
@@ -822,7 +824,7 @@ app.get("/configuracoes/:chave", async (req, res) => {
     const { chave } = req.params;
 
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `SELECT * FROM configuracoes WHERE chave = $1`,
             [chave]
@@ -889,7 +891,7 @@ app.get("/mensalistas", async (req, res) => {
     queryText += ` ORDER BY atualizado_em DESC`;
 
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(queryText, params);
         res.json({ success: true, dados: result.rows || [] });
     } catch (err) {
@@ -901,7 +903,7 @@ app.get("/mensalistas", async (req, res) => {
 app.get("/mensalistas/:placa", async (req, res) => {
     const placa = sanitizePlate(req.params.placa);
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(`SELECT * FROM mensalistas WHERE placa = $1`, [placa]);
         const row = result.rows?.[0];
         if (!row) return res.status(404).json({ error: 'Mensalista não encontrado' });
@@ -918,7 +920,7 @@ app.post("/mensalistas", requireAuth, async (req, res) => {
     if (!isValidPlate(placaNorm) || typeof nome !== 'string' || !nome.trim() || nome.length > 120 || typeof cpf === 'string' && cpf.length > 20 || typeof telefone === 'string' && telefone.length > 40 || typeof ativo !== 'undefined' && typeof ativo !== 'boolean') return res.status(400).json({ error: 'Confira placa, nome, telefone, CPF e status' });
 
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `INSERT INTO mensalistas (placa, nome, telefone, cpf, vencimento, ativo)
              VALUES ($1, $2, $3, $4, $5, $6)
@@ -946,7 +948,7 @@ app.put("/mensalistas/:id", requireAuth, async (req, res) => {
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
 
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `UPDATE mensalistas
              SET nome = $1,
@@ -972,7 +974,7 @@ app.patch("/mensalistas/:id/status", requireAuth, async (req, res) => {
     const { id } = req.params;
     const { ativo } = req.body || {};
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `UPDATE mensalistas SET ativo = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
             [Boolean(ativo), id]
@@ -991,7 +993,7 @@ app.get("/mensalistas/:id/pagamentos", requireAuth, async (req, res) => {
     const { id } = req.params;
     const limit = Math.min(parseInt(req.query.limit || '50', 10) || 50, 200);
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `SELECT
                 id,
@@ -1022,7 +1024,7 @@ app.get("/mensalistas/:id/pagamentos", requireAuth, async (req, res) => {
 app.get("/auditoria", requireAuth, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit || '100', 10) || 100, 500);
     try {
-        await dbReady;
+        await ensureDatabase();
         const result = await query(
             `SELECT id, acao, detalhes, criado_em FROM auditoria ORDER BY criado_em DESC LIMIT $1`,
             [limit]

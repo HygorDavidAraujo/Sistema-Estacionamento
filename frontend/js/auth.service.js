@@ -23,7 +23,7 @@
     async function json(path, method = 'GET', body) {
         const response = await request(`${base()}${path}`, { method, headers: body ? { 'Content-Type':'application/json' } : {}, ...(body ? { body: JSON.stringify(body) } : {}) });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.success) throw new Error(data.error || 'Não foi possível concluir');
+        if (!response.ok || !data.success) throw Object.assign(new Error(data.error || 'Não foi possível concluir'),{ status:response.status });
         return data;
     }
     function applyPermissions() {
@@ -74,13 +74,16 @@
         el('authNome').required = setup; el('authCodigo').required = setup;
         el('authSubmit').textContent = setup ? 'Criar administrador' : 'Entrar';
         el('authSenha').autocomplete = setup ? 'new-password' : 'current-password';
-        if (setup) el('authMessage').textContent = 'Crie seu administrador com o código de primeiro acesso fornecido na implantação.';
+        el('authMessage').textContent = setup ? 'Crie seu administrador com o código de primeiro acesso fornecido na implantação.' : '';
     }
     async function initialize() {
         if (!bound) bind();
         localStorage.removeItem('adminToken');
+        let available = false;
+        el('authSubmit').disabled = true; el('authRetry').disabled = true;
         try {
             await status();
+            available = true;
             const response = await request(`${base()}/auth/me`);
             if (response.ok) {
                 const data = await response.json(); user = data.usuario; csrf = data.csrf;
@@ -88,6 +91,8 @@
         } catch (error) { el('authMessage').textContent = error.message; }
         if (!user) { clearLocal(); el('authPopup').setAttribute('aria-hidden','false'); }
         applyPermissions();
+        el('authSubmit').disabled = !available;
+        el('authRetry').disabled = false; el('authRetry').hidden = available;
         return Boolean(user);
     }
     async function access() {
@@ -113,6 +118,9 @@
     function resetUserForm() { el('usuarioForm').reset(); el('usuarioId').value = ''; el('usuarioLogin').readOnly = false; el('usuarioSenha').required = true; el('usuarioAtivo').checked = true; }
     function bind() {
         bound = true;
+        el('authRetry').addEventListener('click',async()=>{
+            if(await initialize()) await window.onSessionStarted?.();
+        });
         el('authForm').addEventListener('submit', async event => {
             event.preventDefault(); const button = el('authSubmit'); button.disabled = true;
             try {
@@ -123,7 +131,7 @@
                 el('authSenha').autocomplete = 'current-password';
                 el('authForm').reset(); el('authMessage').textContent = ''; el('authPopup').setAttribute('aria-hidden','true'); applyPermissions();
                 await window.onSessionStarted?.();
-            } catch (error) { el('authMessage').textContent = error.message; }
+            } catch (error) { el('authMessage').textContent = error.message; if(error.status===503)el('authRetry').hidden=false; }
             finally { button.disabled = false; }
         });
         el('btnUsuarios').addEventListener('click', async () => {

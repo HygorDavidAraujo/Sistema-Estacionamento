@@ -239,3 +239,18 @@ test('formulário de primeiro acesso volta a exigir somente usuário e senha dep
     expect(await page.locator('#authNome').evaluate(input=>input.required)).toBe(false);
     expect(await page.locator('#authCodigo').evaluate(input=>input.required)).toBe(false);
 });
+
+test('tela de acesso recupera indisponibilidade temporária sem reiniciar o navegador',async({page})=>{
+    await page.click('#btnAuth');await expect(page.locator('body')).toHaveAttribute('data-session','locked');
+    let calls=0;
+    await page.route('**/auth/status',route=>{
+        if(++calls===1)return route.fulfill({status:503,json:{error:'Banco de dados temporariamente indisponível. Tente novamente em instantes.',code:'DATABASE_UNAVAILABLE'}});
+        return route.continue();
+    });
+    await page.reload();await expect(page.locator('#authMessage')).toContainText('temporariamente indisponível');
+    await expect(page.locator('#authRetry')).toBeVisible();await expect(page.locator('#authSubmit')).toBeDisabled();
+    await page.click('#authRetry');await expect(page.locator('#authRetry')).toBeHidden();await expect(page.locator('#authSubmit')).toBeEnabled();
+    await page.fill('#authLogin','teste');await page.fill('#authSenha','Senha-teste-123');await page.click('#authSubmit');
+    await expect(page.locator('body')).toHaveAttribute('data-session','active');
+    await expect(page.locator('#connectionStatus')).toHaveText('Sincronizado');
+});

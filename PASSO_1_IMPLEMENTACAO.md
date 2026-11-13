@@ -61,7 +61,7 @@ O fluxo utilizado neste projeto é commit/push no GitHub e deploy no Vercel. Na 
 4. Abra o domínio HTTPS do sistema. Na tela **Primeiro acesso**, informe o mesmo `AUTH_SETUP_TOKEN` cadastrado no Vercel e crie seu administrador e senha.
 5. Cadastre funcionários em **Configurações → Usuários e permissões** e preencha os dados do estacionamento para os comprovantes.
 
-As sessões são persistidas no PostgreSQL, permitindo acesso entre instâncias da hospedagem. A configuração de build inclui explicitamente o schema e as migrações SQL no pacote da função. A migração aditiva é aplicada quando o backend inicializa no ambiente implantado; a implantação real e seus logs ainda precisam ser conferidos depois do push/deploy. Os testes locais não publicam as alterações na hospedagem.
+As sessões são persistidas no PostgreSQL, permitindo acesso entre instâncias da hospedagem. A configuração de build inclui explicitamente o schema e as migrações SQL no pacote da função. A preparação aditiva ocorre na primeira requisição que precisa do banco e registra sua versão para não repetir os comandos em cada instância. A implantação real e seus logs ainda precisam ser conferidos depois do push/deploy. Os testes locais não publicam as alterações na hospedagem.
 
 Se usar deploy de Preview para testar, configure um banco separado para esse ambiente, pois a inicialização também aplica o schema/migração no banco indicado pelas variáveis daquele deploy.
 
@@ -70,7 +70,7 @@ Referências: [variáveis por ambiente no Vercel](https://vercel.com/docs/enviro
 ## Execução local opcional
 
 1. Reinicie o backend com `npm start` dentro de `backend/`.
-2. Abra o endereço informado pelo terminal. A migração aditiva `backend/migrations/001-security.sql` é aplicada na inicialização, preservando os registros operacionais.
+2. Abra o endereço informado pelo terminal. A migração aditiva `backend/migrations/001-security.sql` é aplicada no primeiro acesso à API, quando necessária, preservando os registros operacionais.
 3. Se for o primeiro acesso, use o código mostrado no terminal para criar seu administrador e senha. Em hospedagem, configure `AUTH_SETUP_TOKEN` antes do primeiro acesso; o código local aleatório não é usado em produção.
 4. Cadastre funcionários em **Configurações → Usuários e permissões** e preencha os dados do estacionamento para os comprovantes.
 

@@ -27,7 +27,7 @@ export function createAuth({ query, tx, ready, env, setupToken }) {
     function cookie(res, value, clear = false) {
         res.cookie('parking_session', value, { httpOnly: true, secure: production, sameSite: 'strict', path: '/', maxAge: clear ? 0 : sessionHours * 3600000 });
     }
-    function wrap(fn) { return async (req, res, next) => { try { if (!await ready()) return res.status(503).json({ error: 'Banco de dados indisponível' }); await fn(req, res, next); } catch (e) { next(e); } }; }
+    function wrap(fn) { return async (req, res, next) => { try { if (!await ready()) { res.set('Retry-After','2'); return res.status(503).json({ error: 'Banco de dados temporariamente indisponível. Tente novamente em instantes.', code:'DATABASE_UNAVAILABLE' }); } await fn(req, res, next); } catch (e) { next(e); } }; }
     const requireAuth = async (req, res, next) => {
         const raw = (req.headers.cookie || '').split(';').map(p => p.trim()).find(p => p.startsWith('parking_session='))?.slice(16);
         if (!raw || !/^[a-f0-9]{64}$/.test(raw)) return res.status(401).json({ error: 'Entre com seu usuário e senha' });

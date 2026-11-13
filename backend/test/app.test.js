@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { once } from 'node:events';
+
+test('função Vercel é importada sem iniciar conexões ou executar migração em segundo plano',async()=>{
+    const {stdout}=await promisify(execFile)(process.execPath,['--input-type=module','-e',"const {default:app}=await import('./server.js'); if(typeof app!=='function')process.exit(1);console.log('function-ready');"],{
+        cwd:new URL('..',import.meta.url),timeout:5000,windowsHide:true,
+        env:{...process.env,VERCEL:'1',NODE_ENV:'production',AUTH_SETUP_TOKEN:'boot-test',DATABASE_URL:'postgres://test:test@127.0.0.1:1/test',PGSSLMODE:'disable',ANPR_API_KEY:'',ANPR_URL:''}
+    });
+    assert.match(stdout,/function-ready/);assert.doesNotMatch(stdout,/Schema aplicado|Falha ao preparar/);
+});
 
 test('aplicação completa inicia, serve a interface e protege as rotas sem tocar no banco real', async t => {
     const child = spawn(process.execPath, ['server.js'], {

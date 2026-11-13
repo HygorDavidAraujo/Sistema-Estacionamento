@@ -1,15 +1,18 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFile } from 'node:fs/promises';
 import { createApp } from '../app.js';
+import { createDatabaseInitializer } from '../services/database-initialization.js';
 export async function testDatabase() {
     const pg = await PGlite.create();
     let ready;
     const normalize = result => ({ ...result, rowCount: result.affectedRows ?? result.rows?.length ?? 0 });
+    const connectionQuery = client => async(sql,params=[]) => normalize(params.length ? await client.query(sql,params) : (await client.exec(sql)).at(-1));
+    const initialize = createDatabaseInitializer({
+        pool:{ connect:async()=>({query:connectionQuery(pg),release(){}}) },
+        loadSql:async()=> (await Promise.all(['migrations/000-compatibility.sql','schema.sql','migrations/001-security.sql'].map(file=>readFile(new URL(`../${file}`,import.meta.url),'utf8')))).join('\n')
+    });
     const db = {
-        initDb: () => ready ||= (async () => {
-            await pg.exec(await readFile(new URL('../schema.sql',import.meta.url),'utf8'));
-            await pg.exec(await readFile(new URL('../migrations/001-security.sql',import.meta.url),'utf8'));
-        })(),
+        initDb: () => ready ||= initialize().catch(error=>{ready=null;throw error;}),
         query: async (sql,params=[]) => normalize(await pg.query(sql,params)),
         tx: work => pg.transaction(client => work({ query:async (sql,params=[]) => normalize(await client.query(sql,params)) }))
     };
@@ -18,7 +21,7 @@ export async function testDatabase() {
 }
 export async function testServer(options = {}) {
     const { db,pg } = await testDatabase();
-    const app = createApp({ db, env:{ NODE_ENV:'test', AUTH_SETUP_TOKEN:'test-setup-secret' }, ...options });
+    const app = createApp({ db:{...db,initDb:options.initialize ? ()=>options.initialize(db.initDb) : db.initDb}, env:{ NODE_ENV:'test', AUTH_SETUP_TOKEN:'test-setup-secret' }, ...options });
     const server = await new Promise(resolve => { const s = app.listen(0,'127.0.0.1',() => resolve(s)); });
     const url = `http://127.0.0.1:${server.address().port}`;
     const client = () => {

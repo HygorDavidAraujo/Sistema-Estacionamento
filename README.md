@@ -18,7 +18,7 @@ npm start
 
 Abra **http://localhost:3000**. O mesmo servidor atende frontend e API. Se a porta estiver ocupada, observe a próxima porta informada no terminal. Também é possível iniciar da raiz com `node backend/server.js`; a configuração do backend será carregada da mesma forma.
 
-O schema é aplicado na inicialização sem exclusão dos dados existentes. A nova tabela `veiculos_cache` armazena consultas mesmo quando nenhuma entrada é registrada.
+O schema é preparado no primeiro acesso à API que precisa do banco, sem exclusão dos dados existentes. A versão aplicada é registrada em `estacionamento_migracoes`; novas instâncias consultam essa versão, sem repetir todos os comandos de schema. Falhas transitórias permitem nova tentativa, sem reiniciar o servidor. A tabela `veiculos_cache` armazena consultas mesmo quando nenhuma entrada é registrada.
 
 ## Consulta gratuita: marca, modelo e cor
 
@@ -79,6 +79,8 @@ Perfis: operador registra entradas, saídas e recebimentos; supervisor também a
 Para Vercel, mantenha as variáveis do banco, o código inicial de configuração e as opções de consulta no ambiente do projeto. A API está disponível em `/api`. Sessões em produção exigem HTTPS. Origens adicionais, quando necessárias, devem ser explicitadas em `ALLOWED_ORIGINS`, separadas por vírgula. Alterações locais precisam ser publicadas para aparecer na versão hospedada.
 
 O fluxo de ativação por **GitHub → Vercel**, incluindo as variáveis de Production e o primeiro administrador, está em [PASSO_1_IMPLEMENTACAO.md](PASSO_1_IMPLEMENTACAO.md). O `vercel.json` inclui explicitamente o schema e as migrações SQL no pacote do backend.
+
+O prazo padrão de conexão e de consulta é 15 segundos. Ajustes opcionais usam `PG_CONNECTION_TIMEOUT_MS` e `PG_QUERY_TIMEOUT_MS` (milissegundos). No Vercel, o pool é integrado ao ciclo de suspensão das funções com `attachDatabasePool`. Se houver falha transitória ao abrir a tela de acesso, use **Tentar novamente**. O diagnóstico da correção está em [CORRECAO_503_VERCEL.md](CORRECAO_503_VERCEL.md).
 
 O limite por IP das rotas de consulta/reconhecimento é local à instância do servidor; não constitui uma cota global entre instâncias serverless.
 
