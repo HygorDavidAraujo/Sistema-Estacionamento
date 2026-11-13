@@ -121,11 +121,11 @@ O histórico permite filtrar por data de entrada ou saída, placa, situação, o
 
 O administrador dispõe de **Configurações → Operação, backup e recuperação** para consultar diagnóstico, suspender atendimentos com justificativa, gerar/verificar/baixar cópias externas e restaurar dados com ponto de retorno. A manutenção permite consultar pátio, histórico e relatórios e bloqueia alterações operacionais; a restauração mantém essa suspensão até a conferência e liberação do administrador.
 
-As cópias externas usam AES-256-GCM e **Vercel Blob privado**, com releitura e validação antes da confirmação. O agendamento diário e a retenção precisam de armazenamento conectado, `BACKUP_ENCRYPTION_KEY` e `CRON_SECRET`; `AUTH_RECOVERY_TOKEN` permite recuperar a senha de um administrador ativo usando código de uso único. Execute `npm run setup:secrets` dentro de `backend/` para gerar os três valores no seu computador. Guarde a chave também fora da hospedagem, sem incluí-la no Git.
+O padrão é **backup manual, sem conectar Vercel Blob ou contratar armazenamento adicional**. No painel, baixe o backup operacional ao final do expediente. Ele funciona sem novas variáveis. Opcionalmente, `BACKUP_ENCRYPTION_KEY` habilita o download de uma cópia completa cifrada com AES-256-GCM, incluindo usuários, e `AUTH_RECOVERY_TOKEN` permite recuperar a senha de um administrador ativo usando código de uso único. Execute `npm run setup:secrets` dentro de `backend/` para gerar esses dois valores no seu computador. Guarde a chave separadamente, sem incluí-la no Git.
 
-**A proteção externa só estará ativa após configurar o Vercel, publicar e verificar a primeira cópia real.** Instruções completas em [PASSO_4_IMPLEMENTACAO.md](PASSO_4_IMPLEMENTACAO.md). A migração `005-operational-recovery.sql` é automática; não exige SQL manual no Neon. A limpeza programada remove somente itens temporários expirados, preservando histórico e recebimentos.
+**Confira o download e guarde os arquivos fora da hospedagem. Não há cópia automática no modo manual.** O agendamento foi removido do `vercel.json`; não é preciso configurar `CRON_SECRET` ou variáveis de Blob. O painel mostra a última geração manual, sem garantir que o arquivo foi salvo no computador. Instruções completas em [PASSO_4_IMPLEMENTACAO.md](PASSO_4_IMPLEMENTACAO.md). A migração `005-operational-recovery.sql` é automática; não exige SQL manual no Neon.
 
-O backup operacional v3 continua sem credenciais. O pacote cifrado de recuperação v1 inclui usuários com hashes de senha e códigos de recuperação consumidos; nunca sessões. Pela interface, a restauração conserva as senhas atuais. Para recuperar também os usuários em outra base vazia, use a ferramenta local conforme [GUIA_OPERACAO_E_RECUPERACAO.md](GUIA_OPERACAO_E_RECUPERACAO.md):
+O backup operacional v3 continua sem credenciais. O pacote cifrado de recuperação v1, agora baixado diretamente no computador, inclui usuários com hashes de senha e códigos de recuperação consumidos; nunca sessões. Pela interface, a restauração conserva as senhas atuais. Para recuperar também os usuários em outra base vazia, use a ferramenta local conforme [GUIA_OPERACAO_E_RECUPERACAO.md](GUIA_OPERACAO_E_RECUPERACAO.md):
 
 ```powershell
 cd backend
@@ -138,7 +138,7 @@ A tela avisa indisponibilidade e conserva, durante a mesma sessão no navegador,
 
 `/api/health` verifica o processo; `/api/ready` verifica também o banco. Os logs de erro e o cabeçalho `X-Request-ID` permitem correlacionar falhas. A conexão PostgreSQL verifica certificado e hostname do servidor.
 
-Validação acumulada: **86 testes de lógica/API e 20 de navegador aprovados**, com zero vulnerabilidades reportadas por `npm audit`. Banco isolado em memória e armazenamento externo simulado; a ativação em produção e o teste físico de impressão dependem da publicação e do equipamento.
+Validação atual: **87 testes de lógica/API e 21 de navegador aprovados**, usando banco isolado em memória. A adaptação manual também verifica a recuperação do arquivo completo sem armazenamento externo e os dois downloads pela interface. Confira os detalhes em [PASSO_4_IMPLEMENTACAO.md](PASSO_4_IMPLEMENTACAO.md). O download na hospedagem e a impressão física precisam ser conferidos após a publicação.
 
 ## Estrutura
 

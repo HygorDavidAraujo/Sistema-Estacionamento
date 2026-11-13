@@ -10,7 +10,7 @@ export function createOperationalService({query,tx,env,clock=()=>new Date(),stor
     const system={id:null,nome:'Agendamento automático',perfil:'sistema'};
     function configuration(){
         const key=/^[a-f\d]{64}$/i.test(env.BACKUP_ENCRYPTION_KEY||''),store=storage.configured(),cron=String(env.CRON_SECRET||'').length>=32;
-        return {armazenamento:store,chave:key,agendamento:cron,configurado:key&&store,automatico:key&&store&&cron&&env.BACKUP_AUTOMATIC_ENABLED!=='false'};
+        return {modo:store?'externo':'manual',armazenamento:store,chave:key,agendamento:cron,configurado:key&&store,automatico:key&&store&&cron&&env.BACKUP_AUTOMATIC_ENABLED==='true'};
     }
     async function state(){return (await query('SELECT manutencao,motivo,usuario_nome,atualizado_em FROM operacao_estado WHERE id=1')).rows[0];}
     async function setMaintenance(active,note,user){
@@ -33,6 +33,13 @@ export function createOperationalService({query,tx,env,clock=()=>new Date(),stor
         const recuperacoes=(await client.query('SELECT token_hash,usuario_id,criado_em FROM auth_recuperacoes ORDER BY token_hash')).rows;
         return {formato:'estacionamento-recuperacao',versao:1,operacional,usuarios,recuperacoes,checksum_usuarios:sha256(JSON.stringify(usuarios))};
     });}
+    async function manualArchive(user){
+        encryptionKey(env.BACKUP_ENCRYPTION_KEY);
+        const bundle=await captureBundle(),bytes=encryptBundle(bundle,env.BACKUP_ENCRYPTION_KEY,clock());
+        decryptBundle(bytes,env.BACKUP_ENCRYPTION_KEY);
+        await tx(client=>audit(client,user,'backup_cifrado_export',{checksum:sha256(bytes),tamanho:bytes.length,registros:recordCount(bundle.operacional),destino:'download_manual'}));
+        return bytes;
+    }
     async function backup(origin='manual',user=system){
         if(!configuration().configurado)fail('Configure o armazenamento privado e a chave de backup no Vercel antes de gerar a cópia externa.',503);
         encryptionKey(env.BACKUP_ENCRYPTION_KEY);
@@ -100,5 +107,5 @@ export function createOperationalService({query,tx,env,clock=()=>new Date(),stor
         if(!configuration().automatico)return {success:true,limpeza,backup:'nao_configurado_ou_desativado'};
         return {success:true,limpeza,backup:await backup('agendamento')};
     }
-    return {configuration,state,setMaintenance,cleanup,backup,archive,restore,returnPoint,scheduled};
+    return {configuration,state,setMaintenance,cleanup,manualArchive,backup,archive,restore,returnPoint,scheduled};
 }

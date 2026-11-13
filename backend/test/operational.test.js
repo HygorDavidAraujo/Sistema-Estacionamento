@@ -18,9 +18,41 @@ test('TLS PostgreSQL verifica certificado e hostname mesmo com sslmode=require n
     const options=postgresOptions({DATABASE_URL:'postgres://test:secret@example.invalid/db?sslmode=require&uselibpqcompat=true',PGSSLMODE:'require'});
     assert.equal(new URL(options.connectionString).searchParams.get('sslmode'),'verify-full');assert.notEqual(new pg.Client(options).connectionParameters.ssl.rejectUnauthorized,false);
 });
+
+test('backup manual recupera usuários sem Blob; modo manual não exige serviço ou agendamento',async t=>{
+    let calls=0;
+    const storage={configured:()=>false,async write(){calls++;throw Error('sem armazenamento');},async read(){calls++;throw Error('sem armazenamento');},async remove(){calls++;throw Error('sem armazenamento');}};
+    const env={NODE_ENV:'test',AUTH_SETUP_TOKEN:'test-setup-secret',BACKUP_ENCRYPTION_KEY:encryption};
+    const s=await testServer({env,backupStorage:storage});t.after(()=>s.close());
+    const admin=s.client(),operator=s.client(),visitor=s.client();
+    await admin.request('/auth/setup','POST',{codigo:'test-setup-secret',login:'admin',nome:'Administrador manual',senha:'Senha-segura-123'});
+    await admin.request('/auth/users','POST',{login:'operador',nome:'Operador',perfil:'operador',senha:'Senha-segura-123'});
+    await operator.request('/auth/login','POST',{login:'operador',senha:'Senha-segura-123'});
+    await admin.request('/entrada','POST',{placa:'ABC1D23',operacao_id:randomUUID()});
+    assert.equal((await visitor.request('/operacao/backup-manual')).status,401);
+    assert.equal((await operator.request('/operacao/backup-manual')).status,403);
+    const initial=(await admin.request('/operacao/status')).data.dados;
+    assert.equal(initial.backup.modo,'manual');assert.equal(initial.backup.automatico,false);assert.equal(initial.backup_atrasado,false);
+    const downloaded=await admin.request('/operacao/backup-manual');assert.equal(downloaded.status,200);
+    assert.match(downloaded.headers.get('content-disposition'),/attachment;.*backup-completo-cifrado/);
+    assert.ok(!JSON.stringify(downloaded.data).includes('scrypt:'));
+    const bundle=decryptBundle(Buffer.from(JSON.stringify(downloaded.data)),encryption);
+    assert.equal(bundle.usuarios.length,2);assert.equal(bundle.operacional.tabelas.historico[0].placa,'ABC1D23');
+    const target=await testDatabase();t.after(()=>target.pg.close());
+    await recoverEmptyDatabase(target.db,bundle);
+    assert.equal((await target.db.query('SELECT COUNT(*)::int AS n FROM usuarios')).rows[0].n,2);
+    assert.equal((await target.db.query('SELECT COUNT(*)::int AS n FROM sessoes')).rows[0].n,0);
+    const status=(await admin.request('/operacao/status')).data.dados;
+    assert.equal(status.ultimo_backup_manual.acao,'backup_cifrado_export');assert.equal(status.execucoes.length,0);
+    assert.ok(!JSON.stringify(status).includes(encryption));
+    delete env.BACKUP_ENCRYPTION_KEY;
+    assert.equal((await admin.request('/operacao/backup-manual')).status,503);
+    const operational=await admin.request('/backup');assert.equal(operational.status,200);assert.equal(operational.data.dados.versao,3);
+    assert.equal(calls,0);
+});
 test('manutenção, cópia externa cifrada, recuperação integral e chave administrativa de uso único',async t=>{
     const storage=memoryStorage();let now=new Date('2026-11-13T12:00:00Z');
-    const env={NODE_ENV:'test',AUTH_SETUP_TOKEN:'test-setup-secret',AUTH_RECOVERY_TOKEN:recovery,BACKUP_ENCRYPTION_KEY:encryption,CRON_SECRET:cron};
+    const env={NODE_ENV:'test',AUTH_SETUP_TOKEN:'test-setup-secret',AUTH_RECOVERY_TOKEN:recovery,BACKUP_ENCRYPTION_KEY:encryption,CRON_SECRET:cron,BACKUP_AUTOMATIC_ENABLED:'true'};
     const s=await testServer({env,backupStorage:storage,clock:()=>now});t.after(()=>s.close());const admin=s.client(),operator=s.client(),publicClient=s.client();
     const post=(client,path,body={})=>client.request(path,'POST',{operacao_id:randomUUID(),...body});
     await admin.request('/auth/setup','POST',{codigo:'test-setup-secret',login:'admin',nome:'Administrador',senha:'Senha-segura-123'});

@@ -19,15 +19,21 @@ export function createOperationalRouter({service,query,tx,allow,ready,env,clock=
     }));
     router.get('/operacao/estado',handle(async(_req,res)=>res.json({success:true,dados:await service.state()})));
     router.get('/operacao/status',allow('administrador'),handle(async(_req,res)=>{
-        const [state,backups,points,counts]=await Promise.all([
+        const [state,backups,points,counts,manual]=await Promise.all([
             service.state(),query('SELECT id,origem,estado,arquivo,checksum,chave_id,tamanho,registros,verificado_em,erro_codigo,criado_em,concluido_em FROM backup_execucoes ORDER BY criado_em DESC LIMIT 50'),
             query('SELECT id,usuario_id,criado_em FROM operacao_restauracoes ORDER BY criado_em DESC LIMIT 3'),
-            query("SELECT (SELECT COUNT(*)::int FROM historico WHERE status='ativo') AS patio,(SELECT COUNT(*)::int FROM caixa_turnos WHERE estado='aberto') AS caixas_abertos,(SELECT COUNT(*)::int FROM caixa_conferencias WHERE estado='pendente' AND substituida_em IS NULL) AS diferencas_pendentes")
+            query("SELECT (SELECT COUNT(*)::int FROM historico WHERE status='ativo') AS patio,(SELECT COUNT(*)::int FROM caixa_turnos WHERE estado='aberto') AS caixas_abertos,(SELECT COUNT(*)::int FROM caixa_conferencias WHERE estado='pendente' AND substituida_em IS NULL) AS diferencas_pendentes"),
+            query("SELECT criado_em,acao,usuario_nome FROM auditoria WHERE acao IN ('backup_export','backup_cifrado_export') ORDER BY criado_em DESC,id DESC LIMIT 1")
         ]);
         const verified=backups.rows.find(row=>row.estado==='concluido'&&row.arquivo&&row.verificado_em);
-        res.json({success:true,dados:{schema:schemaVersion,agora:clock().toISOString(),manutencao:state,backup:service.configuration(),ultimo_backup:verified||null,backup_atrasado:!verified||clock()-new Date(verified.verificado_em)>36*3600000,execucoes:backups.rows,pontos_retorno:points.rows,operacao:counts.rows[0]}});
+        const configuration=service.configuration();
+        res.json({success:true,dados:{schema:schemaVersion,agora:clock().toISOString(),manutencao:state,backup:configuration,ultimo_backup:verified||null,ultimo_backup_manual:manual.rows[0]||null,backup_atrasado:configuration.automatico&&(!verified||clock()-new Date(verified.verificado_em)>36*3600000),execucoes:backups.rows,pontos_retorno:points.rows,operacao:counts.rows[0]}});
     }));
     router.post('/operacao/manutencao',allow('administrador'),handle(async(req,res)=>res.json(await service.setMaintenance(req.body.ativo,req.body.motivo,req.user))));
+    router.get('/operacao/backup-manual',allow('administrador'),handle(async(req,res)=>{
+        const bytes=await service.manualArchive(req.user);
+        res.type('application/json').attachment(`backup-completo-cifrado-${clock().toISOString().replace(/[:.]/g,'-')}.json`).send(bytes);
+    }));
     router.post('/operacao/backups',allow('administrador'),handle(async(req,res)=>res.json(await service.backup('manual',req.user))));
     router.get('/operacao/backups/:id/arquivo',allow('administrador'),handle(async(req,res)=>{
         const {bytes}=await service.archive(req.params.id);await tx(client=>audit(client,req.user,'backup_cifrado_download',{id:req.params.id}));

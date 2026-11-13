@@ -8,6 +8,7 @@ let testClockOffset=0;
 const backupFiles=new Map();
 const backupStorage={configured:()=>true,async write(path,bytes){backupFiles.set(path,Buffer.from(bytes));return path;},async read(path){return Buffer.from(backupFiles.get(path));},async remove(path){backupFiles.delete(path);}};
 const app=createApp({db,env:{NODE_ENV:'test',AUTH_RECOVERY_TOKEN:'preview-recovery-'.repeat(4),BACKUP_ENCRYPTION_KEY:'11'.repeat(32),CRON_SECRET:'preview-cron-'.repeat(5)},backupStorage,clock:()=>new Date(Date.now()+testClockOffset),plateFetch:async url=>Response.json({brand:'MARCA TESTE',model:url.includes('DEF4G56')?'VEÍCULO B':'VEÍCULO A',color:'Cinza'})});
+app.post('/__test/backup-mode',(req,res)=>{backupStorage.configured=()=>req.body.externo===true;res.json({success:true});});
 app.post('/__test/clock',(req,res)=>{testClockOffset=Number(req.body.advanceMinutes||0)*60000;res.json({success:true});});
 // Preparação exclusiva deste servidor isolado, sem equivalente na aplicação real.
 app.post('/__test/prepare',async (req,res)=>{

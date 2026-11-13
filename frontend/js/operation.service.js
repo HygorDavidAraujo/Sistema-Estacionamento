@@ -46,7 +46,13 @@
     async function mode(active,motivo){await request('/operacao/manutencao','POST',{ativo:active,motivo});await refreshState();}
     async function load(){
         try{const {dados:d}=await request('/operacao/status');
-            el('operacaoResumo').innerHTML=`<p><strong>Banco disponível</strong> · versão ${esc(d.schema)} · ${esc(stamp(d.agora))}</p><p>Operação: ${d.manutencao.manutencao?'suspensa para manutenção':'liberada'} · ${d.operacao.patio} veículos no pátio · ${d.operacao.diferencas_pendentes} diferenças de caixa pendentes</p><p>Armazenamento privado: ${d.backup.armazenamento?'configurado':'pendente'} · Chave de cifragem: ${d.backup.chave?'configurada':'pendente'} · Agendamento: ${d.backup.automatico?'configurado':'pendente ou desativado'}</p><p>Último backup verificado: ${esc(stamp(d.ultimo_backup?.verificado_em))}${d.backup_atrasado?' · É necessário conferir uma cópia recente.':''}</p>`;
+            const backupStatus=d.backup.modo==='manual'
+                ?'<p>Modo de backup: manual · sem armazenamento externo conectado.</p>'
+                :`<p>Armazenamento externo conectado · Backup automático: ${d.backup.automatico?'habilitado':'desativado'}</p><p>Última cópia externa verificada: ${esc(stamp(d.ultimo_backup?.verificado_em))}${d.backup_atrasado?' · É necessário conferir uma cópia recente.':''}</p>`;
+            el('operacaoResumo').innerHTML=`<p><strong>Banco disponível</strong> · versão ${esc(d.schema)} · ${esc(stamp(d.agora))}</p><p>Operação: ${d.manutencao.manutencao?'suspensa para manutenção':'liberada'} · ${d.operacao.patio} veículos no pátio · ${d.operacao.diferencas_pendentes} diferenças de caixa pendentes</p>${backupStatus}<p>Última geração de backup manual: ${esc(stamp(d.ultimo_backup_manual?.criado_em))}. Confira se o arquivo foi salvo.</p>`;
+            el('operacaoBackupExterno').hidden=!d.backup.armazenamento;
+            el('operacaoBackupManual').disabled=!d.backup.chave;
+            el('operacaoChaveManual').textContent=d.backup.chave?'Inclui dados operacionais e usuários, sem sessões. Guarde o arquivo e a chave de cifragem em locais separados.':'O backup operacional está disponível. Para incluir usuários em uma cópia cifrada, configure BACKUP_ENCRYPTION_KEY na hospedagem; não requer armazenamento externo.';
             el('operacaoAtivar').disabled=d.manutencao.manutencao;el('operacaoLiberar').disabled=!d.manutencao.manutencao;el('operacaoBackup').disabled=!d.backup.configurado;
             let html='<table><tr><th>Quando / origem</th><th>Situação</th><th>Verificação</th><th>Ações</th></tr>';
             for(const row of d.execucoes)html+=`<tr><td>${esc(stamp(row.criado_em))}<br>${esc(row.origem)}</td><td>${esc(row.estado)}${row.erro_codigo?` · ${esc(row.erro_codigo)}`:''}</td><td>${esc(stamp(row.verificado_em))}</td><td>${row.arquivo?`<button data-backup-download="${esc(row.id)}">Baixar cifrado</button><button data-backup-verify="${esc(row.id)}">Verificar novamente</button>${row.estado==='concluido'?`<button data-backup-restore="${esc(row.id)}">Restaurar dados operacionais</button>`:''}`:'Arquivo ainda não disponível'}</td></tr>`;
@@ -81,6 +87,8 @@
     }
     function bind(){
         el('btnOperacao').addEventListener('click',open);el('operacaoAtualizar').addEventListener('click',load);
+        el('operacaoBackupOperacional').addEventListener('click',async()=>{await exportarBackup();await load();});
+        el('operacaoBackupManual').addEventListener('click',async()=>{const b=el('operacaoBackupManual');b.disabled=true;try{await ReportService.download('/operacao/backup-manual',`backup-completo-cifrado-${new Date().toISOString().replace(/[:.]/g,'-')}.json`);}finally{await load();}});
         for(const [id,active]of [['operacaoAtivar',true],['operacaoLiberar',false]])el(id).addEventListener('click',async()=>{try{await mode(active,el('operacaoMotivo').value);await load();if(!active)await window.onSessionStarted?.();}catch(error){notify(error.message,'error');}});
         el('operacaoBackup').addEventListener('click',async()=>{const b=el('operacaoBackup');b.disabled=true;try{await request('/operacao/backups','POST',{});await load();notify('Backup externo cifrado e verificado.','success');}catch(error){notify(error.message,'error',8000);}finally{b.disabled=false;}});
         document.body.addEventListener('click',buttons);

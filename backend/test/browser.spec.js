@@ -415,6 +415,24 @@ test('painel de operação verifica backup, restaura com ponto de retorno e libe
     await page.locator('#operacaoPopup [data-close]').click();await page.keyboard.press('F2');await expect(page.locator('#entradaPopup')).toHaveAttribute('aria-hidden','false');
 });
 
+test('backup manual baixa arquivo completo cifrado sem armazenamento externo',async({page})=>{
+    await page.evaluate(async()=>{await operationRequest('/__test/backup-mode',{externo:false});});
+    try{
+        await page.click('#btnMenu');await page.click('#btnOperacao');
+        await expect(page.locator('#operacaoResumo')).toContainText('Modo de backup: manual');
+        await expect(page.locator('#operacaoResumo')).not.toContainText('Armazenamento privado: pendente');
+        await expect(page.locator('#operacaoBackupExterno')).toBeHidden();
+        const plainWait=page.waitForEvent('download');await page.click('#operacaoBackupOperacional');
+        const plain=await plainWait;const data=JSON.parse(await readFile(await plain.path(),'utf8'));
+        expect(data.versao).toBe(3);expect(data.tabelas.usuarios).toBeUndefined();
+        const cipherWait=page.waitForEvent('download');await page.click('#operacaoBackupManual');
+        const cipher=await cipherWait;const bytes=await readFile(await cipher.path(),'utf8');
+        expect(bytes).toContain('AES-256-GCM');expect(bytes).not.toContain('scrypt:');
+        await expect(page.locator('#operacaoResumo')).not.toContainText('Ainda não registrado');
+        await page.screenshot({path:'../artifacts/backup-manual.png',fullPage:true});
+    }finally{await page.evaluate(async()=>{await operationRequest('/__test/backup-mode',{externo:true});});}
+});
+
 test('recuperação administrativa pela interface consome o código de uso único',async({page})=>{
     await page.evaluate(async()=>{await operationRequest('/auth/users',{login:'recuperavel',nome:'Administrador recuperável',perfil:'administrador',senha:'Senha-anterior-123'});});
     await page.click('#btnAuth');await page.click('#btnRecuperarAcesso');await page.fill('#recoveryLogin','recuperavel');await page.fill('#recoveryCodigo','preview-recovery-'.repeat(4));await page.fill('#recoverySenha','Nova-senha-recuperada-123');await page.click('#recoverySubmit');

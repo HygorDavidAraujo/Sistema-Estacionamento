@@ -76,4 +76,4 @@ Resultado final: **74 testes de lógica/API e 17 testes de navegador aprovados**
 
 Evidências locais: [parcial 80 mm](artifacts/mensalidade-parcial-80mm.pdf), [parcial 58 mm](artifacts/mensalidade-parcial-58mm.pdf) e [relatório financeiro em PDF](artifacts/relatorio-recebimentos.pdf). Os arquivos de evidência ficam ignorados no Git. A impressão física não foi testada no equipamento.
 
-O [passo 4 — automações, recuperação e consolidação operacional](PASSO_4_IMPLEMENTACAO.md) está implementado localmente. Consulte seu roteiro para ativar armazenamento privado, segredos e agendamento no Vercel.
+O [passo 4 — recuperação e consolidação operacional](PASSO_4_IMPLEMENTACAO.md) está implementado localmente. A configuração atual usa backup manual, sem armazenamento adicional ou agendamento. Consulte seu roteiro para publicar e habilitar as opções de cifragem e recuperação de acesso.
