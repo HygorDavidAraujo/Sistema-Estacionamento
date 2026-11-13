@@ -9,6 +9,54 @@ test('mensalidade usa períodos exatos de 30 dias, inclusive fevereiro e ano bis
     assert.equal(addPaidPeriods('2028-01-31',1),'2028-03-01');
     assert.equal(addPaidPeriods('2026-11-13',2),'2027-01-12');
 });
+
+test('placas quitadas são reconhecidas automaticamente na entrada e revalidadas no servidor',async t=>{
+    let now=new Date('2026-11-13T12:00:00Z');const s=await testServer({clock:()=>now});t.after(()=>s.close());const admin=s.client();
+    const post=(path,body={})=>admin.request(path,'POST',{operacao_id:randomUUID(),...body});
+    await post('/auth/setup',{codigo:'test-setup-secret',login:'admin',nome:'Administrador',senha:'Senha-segura-123'});
+    const shift=(await post('/caixa/turnos/abrir',{fundo_inicial:0})).data.turno_id;
+    const customer=(await post('/mensalistas',{placa:'ABC1D23',veiculos:['DEF4G56'],nome:'Mensalista automático',valor_mensal:300,limite_simultaneo:1})).data.dados;
+    assert.equal((await admin.request('/mensalistas/ABC1D23')).data.dados.acesso_liberado,false);
+    const q=(await post(`/mensalistas/${customer.id}/cotacao`)).data.dados;
+    assert.equal((await post('/mensalistas/pagamentos',{mensalista_id:customer.id,meses:q.meses,revisao:q.revisao,cobranca_id:q.cobranca_id,periodo_previsto:q.fim_periodo,turno_id:shift,pagamentos:[{forma_pagamento:'Pix',valor_pago:300}]})).status,200);
+    async function exit(entry){const quote=(await post('/saida/cotacao',{entryId:entry.entry_id})).data.dados;assert.equal(quote.valor,0);assert.equal((await post('/saida',{cotacao_id:quote.cotacao_id,turno_id:shift,pagamentos:[]})).status,200);}
+    await t.test('placa principal e adicional recebem benefício mesmo sem marcar mensalista, respeitando limite simultâneo',async()=>{
+        const lookup=(await admin.request('/mensalistas/abc-1d23')).data.dados;assert.equal(lookup.acesso_liberado,true);
+        assert.equal((await admin.request('/mensalistas/DEF4G56')).data.dados.id,customer.id);
+        const first=await post('/entrada',{placa:'abc-1d23',mensalista:false});assert.equal(first.status,200);assert.equal(first.data.mensalista,true);assert.equal(first.data.comprovante.categoria,'Mensalista');
+        assert.equal((await post('/entrada',{placa:'DEF4G56'})).status,409);await exit(first.data);
+        const second=await post('/entrada',{placa:'DEF4G56'});assert.equal(second.status,200);assert.equal(second.data.mensalista,true);
+        const saved=(await s.db.query('SELECT mensalista_id,cliente_nome,mensalista_cobertura_ate FROM historico WHERE entry_id=$1',[second.data.entry_id])).rows[0];
+        assert.equal(String(saved.mensalista_id),String(customer.id));assert.equal(saved.cliente_nome,'Mensalista automático');assert.ok(saved.mensalista_cobertura_ate);await exit(second.data);
+    });
+    await t.test('mensalista quitado não recebe cobrança diária por seleção incorreta',async()=>{
+        const result=await post('/entrada',{placa:'ABC1D23',diarista:true,retirada_em:'2026-11-13T19:00:00-03:00',turno_id:shift,pagamentos:[{forma_pagamento:'Pix',valor_pago:25}]});
+        assert.equal(result.status,409);assert.match(result.data.error,/mensalista com pagamento em dia/);
+        assert.equal((await s.db.query("SELECT COUNT(*)::int AS n FROM caixa_movimentos WHERE origem='diaria'")).rows[0].n,0);
+    });
+    await t.test('dois dias antes e dia do vencimento ainda liberam, após vencimento não há benefício automático',async()=>{
+        for(const [day,state]of [['11','a_vencer'],['13','vence_hoje'],['14','vencido']]){
+            now=new Date(`2026-12-${day}T12:00:00Z`);const row=(await admin.request('/mensalistas/ABC1D23')).data.dados;
+            assert.equal(row.situacao,state);assert.equal(row.acesso_liberado,state!=='vencido');
+        }
+        assert.equal((await post('/entrada',{placa:'ABC1D23',mensalista:true})).status,409);
+        const entry=await post('/entrada',{placa:'DEF4G56'});assert.equal(entry.status,200);assert.equal(entry.data.mensalista,false);assert.equal(entry.data.comprovante.categoria,'Avulso');
+    });
+    await t.test('suspensão, cancelamento, início futuro e pagamento parcial não concedem benefício',async()=>{
+        now=new Date('2026-11-13T12:00:00Z');
+        for(const state of ['suspenso','cancelado']){
+            await s.db.query('UPDATE mensalista_contratos SET estado=$1 WHERE mensalista_id=$2',[state,customer.id]);
+            const row=(await admin.request('/mensalistas/ABC1D23')).data.dados;assert.equal(row.acesso_liberado,false);assert.equal(row.situacao,state);
+        }
+        await s.db.query("UPDATE mensalista_contratos SET estado='ativo',inicio='2026-11-14' WHERE mensalista_id=$1",[customer.id]);
+        assert.equal((await admin.request('/mensalistas/ABC1D23')).data.dados.acesso_liberado,false);
+        const other=(await post('/mensalistas',{placa:'GHI7J89',nome:'Cliente parcial',valor_mensal:300})).data.dados;
+        const quote=(await post(`/mensalistas/${other.id}/cotacao`)).data.dados;
+        await post('/mensalistas/pagamentos',{mensalista_id:other.id,meses:quote.meses,revisao:quote.revisao,cobranca_id:quote.cobranca_id,periodo_previsto:quote.fim_periodo,turno_id:shift,pagamentos:[{forma_pagamento:'Pix',valor_pago:100}]});
+        const lookup=(await admin.request('/mensalistas/GHI7J89')).data.dados;assert.equal(lookup.acesso_liberado,false);assert.equal(lookup.situacao,'sem_pagamento');
+        const entry=await post('/entrada',{placa:'GHI7J89'});assert.equal(entry.status,200);assert.equal(entry.data.mensalista,false);
+    });
+});
 test('contratos pré-pagos, veículos, cobrança parcial, avisos e backup',async t=>{
     let now=new Date('2026-11-13T12:00:00Z');const system=await testServer({clock:()=>now});t.after(()=>system.close());const admin=system.client(),operator=system.client();
     const post=(c,path,body={})=>c.request(path,'POST',{operacao_id:randomUUID(),...body});

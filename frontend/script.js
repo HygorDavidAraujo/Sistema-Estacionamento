@@ -342,21 +342,53 @@ function getVehicleInfo(placa) {
     } catch { return null; }
 }
 
+let mensalistaLookupSequence = 0;
+let mensalistaLookupController = null;
+function mensalistaLookupStatus(message,state='info') {
+    const status=document.getElementById('mensalistaLookupStatus');
+    status.textContent=message;status.dataset.state=state;
+}
+function cancelMensalistaLookup() {
+    mensalistaLookupSequence++;
+    mensalistaLookupController?.abort();mensalistaLookupController=null;
+    autoFillMensalistaData.cancel();
+}
+function resetMensalistaRecognition() {
+    const check=document.getElementById('mensalistaCheck');check.checked=false;check.disabled=false;
+    document.getElementById('diaristaCheck').disabled=false;
+    document.getElementById('mensalistaFields').setAttribute('aria-hidden','true');
+    for(const id of ['mensalistaNome','mensalistaTelefone','mensalistaCpf'])document.getElementById(id).value='';
+    mensalistaLookupStatus('A placa será consultada automaticamente no cadastro de mensalistas.');
+}
 async function preencherMensalistaPorPlaca(placa) {
+    placa=normalizePlaca(placa);if(!isValidPlaca(placa))return false;
+    cancelMensalistaLookup();
+    const controller=new AbortController(),sequence=mensalistaLookupSequence,actor=AuthService.user;
+    mensalistaLookupController=controller;
+    const current=()=>!controller.signal.aborted&&sequence===mensalistaLookupSequence&&actor===AuthService.user
+        &&normalizePlaca(document.getElementById('placaEntrada').value)===placa&&document.getElementById('entradaPopup').getAttribute('aria-hidden')==='false';
+    mensalistaLookupStatus('Conferindo cadastro e validade da mensalidade…','loading');
     try {
-        const res = await apiFetch(`${BACKEND_BASE}/mensalistas/${placa}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data.success || !data.dados) return;
-        if (normalizePlaca(document.getElementById('placaEntrada').value) !== normalizePlaca(placa)
-            || !document.getElementById('mensalistaCheck')?.checked) return;
-        const mensalista = data.dados;
-        document.getElementById('mensalistaNome').value = mensalista.nome || '';
-        document.getElementById('mensalistaTelefone').value = mensalista.telefone || '';
-        document.getElementById('mensalistaCpf').value = mensalista.cpf || '';
-        if(['vencido','vence_hoje','a_vencer','sem_pagamento','suspenso','cancelado'].includes(mensalista.situacao))notify(`Mensalista: ${({vencido:'mensalidade vencida',vence_hoje:'vence hoje',a_vencer:'vence em até 2 dias',sem_pagamento:'sem quitação',suspenso:'contrato suspenso',cancelado:'contrato cancelado'})[mensalista.situacao]}. ${mensalista.vencimento?'Pago até '+mensalista.vencimento:''}`,'info',7000);
-    } catch (err) {
-        // sem mensalista cadastrado
+        const res=await apiFetch(`${BACKEND_BASE}/mensalistas/${encodeURIComponent(placa)}`,{signal:controller.signal});
+        if(!current())return false;
+        if(res.status===404){resetMensalistaRecognition();mensalistaLookupStatus('Placa sem cadastro de mensalista. Entrada avulsa ou período.');return true;}
+        const data=await res.json();if(!current())return false;
+        if(!res.ok||!data.success||!data.dados)throw Error('Consulta indisponível');
+        const mensalista=data.dados,eligible=mensalista.acesso_liberado===true;
+        const check=document.getElementById('mensalistaCheck'),daily=document.getElementById('diaristaCheck');
+        check.checked=eligible;check.disabled=eligible;daily.disabled=eligible;
+        document.getElementById('mensalistaFields').setAttribute('aria-hidden',eligible?'false':'true');
+        for(const [id,key]of [['mensalistaNome','nome'],['mensalistaTelefone','telefone'],['mensalistaCpf','cpf']])document.getElementById(id).value=eligible?mensalista[key]||'':'';
+        const validity=mensalista.vencimento?` Pago até ${formatBrDate(mensalista.vencimento)}.`:'';
+        const labels={em_dia:'mensalidade em dia',a_vencer:'vence em até 2 dias',vence_hoje:'vence hoje',vencido:'mensalidade vencida',sem_pagamento:'sem quitação',suspenso:'contrato suspenso',cancelado:'contrato cancelado',a_iniciar:'contrato ainda não iniciado'};
+        if(eligible){daily.checked=false;document.getElementById('diaristaFields').hidden=true;}
+        mensalistaLookupStatus(`${eligible?'Mensalista reconhecido':'Mensalista cadastrado'}: ${mensalista.nome} · ${labels[mensalista.situacao]||mensalista.situacao}.${validity} ${eligible?'Entrada como mensalista, sem cobrança avulsa.':'Benefício indisponível. Renove ou regularize para usar a mensalidade; sem regularização, a entrada será avulsa ou período.'}`,eligible&&mensalista.situacao==='em_dia'?'success':'warning');
+        return true;
+    } catch {
+        if(current()){resetMensalistaRecognition();mensalistaLookupStatus('Não foi possível conferir a mensalidade. Tente registrar novamente para consultar o servidor.','warning');}
+        return false;
+    } finally {
+        if(mensalistaLookupController===controller)mensalistaLookupController=null;
     }
 }
 
@@ -426,26 +458,25 @@ const autoFillVehicleDataAPI = debounce(async function(options = {}) {
 }, 550);
 function handlePlateInput() {
     cancelVehicleLookup();
+    cancelMensalistaLookup();
     const input = document.getElementById('placaEntrada');
     const placa = normalizePlaca(input.value);
     input.value = placa;
     if (vehicleFieldPlate !== placa) {
         ['marcaEntrada', 'modeloEntrada', 'corEntrada'].forEach(id => { document.getElementById(id).value = ''; });
-        ['mensalistaNome', 'mensalistaTelefone', 'mensalistaCpf'].forEach(id => { document.getElementById(id).value = ''; });
+        resetMensalistaRecognition();
         vehicleFieldPlate = placa;
     }
     autoFillVehicleDataAPI();
 }
 
 const autoFillMensalistaData = debounce(async function() {
-    const mensalistaCheck = document.getElementById('mensalistaCheck');
-    if (!mensalistaCheck?.checked) return;
     const placaIn = document.getElementById('placaEntrada');
     if (!placaIn) return;
     const placa = normalizePlaca(placaIn.value || '');
     if (placa.length < 7 || !isValidPlaca(placa)) return;
     await preencherMensalistaPorPlaca(placa);
-}, 600);
+}, 300);
 
 ///////////////////////////
 // captura de placa via câmera
@@ -512,7 +543,7 @@ async function tratarQrCodeSaida(payload) {
 // UI bindings
 ///////////////////////////
 function bindUI() {
-    document.getElementById('btnEntrada').onclick = () => openPopup('entradaPopup');
+    document.getElementById('btnEntrada').onclick = () => {openPopup('entradaPopup');autoFillMensalistaData();};
     document.getElementById('btnSaida').onclick = () => openPopup('saidaPopup');
     document.getElementById('btnHistorico').onclick = () => {
         openPopup('historicoPopup');
@@ -722,7 +753,7 @@ function closePopup(id) {
     const active = document.activeElement;
     if (active && el.contains(active)) active.blur();
     el.setAttribute('aria-hidden','true');
-    if (id === 'entradaPopup') { cancelVehicleLookup(); fecharCameraEntrada(); }
+    if (id === 'entradaPopup') { cancelVehicleLookup(); cancelMensalistaLookup(); fecharCameraEntrada(); }
     if (id === 'saidaPopup') fecharCameraSaida();
 }
 function closePopupByElement(el) {
@@ -730,7 +761,7 @@ function closePopupByElement(el) {
     const active = document.activeElement;
     if (active && el.contains(active)) active.blur();
     el.setAttribute('aria-hidden','true');
-    if (el.id === 'entradaPopup') { cancelVehicleLookup(); fecharCameraEntrada(); }
+    if (el.id === 'entradaPopup') { cancelVehicleLookup(); cancelMensalistaLookup(); fecharCameraEntrada(); }
     if (el.id === 'saidaPopup') fecharCameraSaida();
 }
 function toggleMenu(show) { const el = document.getElementById('menu'); if (!el) return; el.setAttribute('aria-hidden', show ? 'false' : 'true'); }
@@ -820,6 +851,8 @@ async function loadConfig() {
         const data = await res.json();
         if (data.success && data.dados) {
             const configs = data.dados;
+            document.getElementById('expedienteInicio').value=configs.expediente_inicio?.valor||'08:00';
+            document.getElementById('expedienteFim').value=configs.expediente_fim?.valor||'18:00';
             for (const [key,id] of [['nome_estacionamento','nomeEstacionamento'],['documento_estacionamento','documentoEstacionamento'],['endereco_estacionamento','enderecoEstacionamento'],['telefone_estacionamento','telefoneEstacionamento']]) document.getElementById(id).value = configs[key]?.valor || '';
             
             // Atualiza campos do formulário
@@ -866,6 +899,7 @@ async function loadConfig() {
         document.getElementById('totalVagasConfig').value = vagas;
         document.getElementById('valorMensalidade').value = mensal;
         document.getElementById('valorDiaria').value = diaria;
+        document.getElementById('expedienteInicio').value='08:00';document.getElementById('expedienteFim').value='18:00';
         localStorage.setItem('valorMensalidade', mensal);
         localStorage.setItem('valorDiaria', diaria);
     }
@@ -878,8 +912,10 @@ async function saveConfig() {
     const vagas = document.getElementById('totalVagasConfig').value;
     const mensal = document.getElementById('valorMensalidade').value;
     const diaria = document.getElementById('valorDiaria').value;
+    const inicio=document.getElementById('expedienteInicio').value,fim=document.getElementById('expedienteFim').value;
     
     if (!v1 || !v2 || !tol || !vagas || !mensal || !diaria) return alert('Preencha todos os campos.');
+    if(!inicio||!fim||inicio===fim)return alert('Informe horários de início e fim de expediente válidos e diferentes.');
     
     try {
         // Salva no banco de dados
@@ -896,14 +932,15 @@ async function saveConfig() {
                 tempo_tolerancia: tol,
                 total_vagas: vagas,
                 valor_mensalidade: mensal,
-                valor_diaria: diaria
+                valor_diaria: diaria,
+                expediente_inicio:inicio,expediente_fim:fim
             })
         });
         
         const data = await res.json();
         
         if (!data.success) {
-            throw new Error(data.mensagem || 'Erro ao salvar configurações');
+            throw new Error(data.error || data.mensagem || 'Erro ao salvar configurações');
         }
         
         // Atualiza localStorage para cache
@@ -946,6 +983,7 @@ function isValidPlaca(p) {
 
 function clearEntradaForm() {
     cancelVehicleLookup();
+    cancelMensalistaLookup();resetMensalistaRecognition();
     vehicleFieldPlate = '';
     lookupStatus('Digite a placa ou use a câmera para preencher o cadastro.');
     document.getElementById('placaEntrada').value = '';
@@ -954,7 +992,6 @@ function clearEntradaForm() {
     document.getElementById('corEntrada').value = '';
     document.getElementById('mensalistaCheck').checked = false;
     document.getElementById('diaristaCheck').checked = false;
-    document.getElementById('diariaRetirada').value = '';
     document.getElementById('diaristaFields').hidden = true;
     document.getElementById('mensalistaNome').value = '';
     document.getElementById('mensalistaTelefone').value = '';
@@ -972,14 +1009,13 @@ async function registrarEntrada() {
     if (!isValidPlaca(placa)) return notify('Informe uma placa válida.','error');
     entradaBusy = true; document.getElementById('registrarBtn').disabled = true;
     try {
+        if(!await preencherMensalistaPorPlaca(placa)||normalizePlaca(document.getElementById('placaEntrada').value)!==placa)throw Error('Não foi possível confirmar o tipo de cliente. Confira a placa e tente novamente.');
         const body = { placa,marca:document.getElementById('marcaEntrada').value.trim(),modelo:document.getElementById('modeloEntrada').value.trim(),cor:document.getElementById('corEntrada').value.trim(),mensalista:document.getElementById('mensalistaCheck').checked,diarista:document.getElementById('diaristaCheck').checked };
         if(body.diarista){
-            body.retirada_em=document.getElementById('diariaRetirada').value;
-            if(!body.retirada_em)throw Error('Informe a data e o horário limite para retirada da diária.');
             const shift=await CashService.requireOwnShift();
-            const {dados}=await operationRequest('/entrada/diaria/cotacao',{retirada_em:body.retirada_em});
-            window.dadosPagamento={modo:'diaria',entrada:{...body,retirada_em:dados.retirada_em},turno_id:shift.id,operacao_id:crypto.randomUUID(),valor:dados.valor};
-            document.getElementById('resumoPagamento').innerHTML=`<h4>Diária antecipada</h4><p>Placa: <strong>${escapeHtml(placa)}</strong></p><p>Retirar até: <strong>${escapeHtml(new Date(dados.retirada_em).toLocaleString('pt-BR',{timeZone:dados.fuso}))}</strong></p><p class="valor-total">Pagar agora: ${formatCurrency(dados.valor)}</p><p class="help-text">Após o horário combinado, o atraso será cobrado pela tarifa avulsa. A entrada é registrada ao confirmar o pagamento.</p>`;
+            const {dados}=await operationRequest('/entrada/periodo/cotacao',{});
+            window.dadosPagamento={modo:'diaria',entrada:body,turno_id:shift.id,operacao_id:crypto.randomUUID(),valor:dados.valor};
+            document.getElementById('resumoPagamento').innerHTML=`<h4>Período pré-pago</h4><p>Placa: <strong>${escapeHtml(placa)}</strong></p><p>Expediente: ${escapeHtml(dados.expediente_inicio)} a ${escapeHtml(dados.expediente_fim)}</p><p>Limite do período: <strong>${escapeHtml(new Date(dados.retirada_em).toLocaleString('pt-BR',{timeZone:dados.fuso}))}</strong></p><p class="valor-total">Pagar agora: ${formatCurrency(dados.valor)}</p><p class="help-text">Pode sair a qualquer momento até o limite. Preço fixo, sem desconto por saída antecipada. Após o limite, o excedente será cobrado pela tarifa avulsa. O período começa ao confirmar o pagamento, por até 10 horas e limitado ao fechamento.</p>`;
             resetSplitUI('splitPagamentoLista','splitPagamentoTotal','splitPagamentoRestante',dados.valor);
             closePopup('entradaPopup');openPopup('pagamentoPopup');return;
         }
@@ -990,7 +1026,7 @@ async function registrarEntrada() {
 }
 
 async function concluirEntrada(body,data){
-    const entrada={...body,entryId:data.entry_id,horaEntrada:data.criado_em,horaEntradaMs:new Date(data.criado_em).getTime(),comprovante:data.comprovante,diaria_retirada_em:data.comprovante.diaria_retirada_em,diaria_valor_pago:data.comprovante.diaria_valor_pago,tarifa:data.comprovante.tarifa};
+    const entrada={...body,mensalista:data.mensalista??data.comprovante.categoria==='Mensalista',cliente_nome:data.cliente_nome||'',entryId:data.entry_id,horaEntrada:data.criado_em,horaEntradaMs:new Date(data.criado_em).getTime(),comprovante:data.comprovante,diaria_retirada_em:data.comprovante.diaria_retirada_em,diaria_valor_pago:data.comprovante.diaria_valor_pago,tarifa:data.comprovante.tarifa};
     StorageService.saveEntry(entrada);saveVehicleInfo(body.placa,body.marca,body.modelo,body.cor);
     updatePatioCarList();await carregarDashboard();await CashService.refresh();clearEntradaForm();fecharCameraEntrada();closePopup('entradaPopup');closePopup('pagamentoPopup');
     await renderComprovanteEntrada(entrada);openPopup('comprovanteEntradaPopup');
@@ -1017,7 +1053,7 @@ async function prepararPagamento(entry,{continuarAvulso=false}={}) {
             document.getElementById('renovarAntesSaida').disabled=!dados.mensalista_id;closePopup('saidaPopup');openPopup('mensalistaVencidoPopup');return;
         }
         window.dadosPagamento = { ...dados,turno_id:shift.id,entryId:dados.entry_id,valor:dados.valor,tempo:dados.tempo,horaEntrada:new Date(dados.entrada_em),horaSaida:new Date(dados.saida_em) };
-        document.getElementById('resumoPagamento').innerHTML = `<h4>Resumo da permanência</h4><p>Placa: <strong>${escapeHtml(dados.placa)}</strong></p><p>Entrada: ${escapeHtml(new Date(dados.entrada_em).toLocaleString('pt-BR'))}</p><p>Permanência: ${escapeHtml(dados.tempo)}</p><p>Tipo: ${escapeHtml(dados.tipo)}</p>${dados.diaria_retirada_em?`<p>Diária já paga: ${formatCurrency(dados.diaria_valor_pago)}</p><p>Retirada combinada: ${escapeHtml(new Date(dados.diaria_retirada_em).toLocaleString('pt-BR',{timeZone:dados.fuso}))}</p><p>Atraso: ${escapeHtml(dados.atraso_minutos)} min</p>`:''}<p class="valor-total">${dados.diaria_retirada_em?'Atraso a pagar':'Total'}: ${formatCurrency(dados.valor)}</p><p class="help-text">Valor confirmado pelo servidor. Cotação válida por 2 minutos.</p>`;
+        document.getElementById('resumoPagamento').innerHTML = `<h4>Resumo da permanência</h4><p>Placa: <strong>${escapeHtml(dados.placa)}</strong></p><p>Entrada: ${escapeHtml(new Date(dados.entrada_em).toLocaleString('pt-BR'))}</p><p>Permanência: ${escapeHtml(dados.tempo)}</p><p>Tipo: ${escapeHtml(dados.tipo)}</p>${dados.diaria_retirada_em?`<p>Período já pago: ${formatCurrency(dados.diaria_valor_pago)}</p><p>Limite do período: ${escapeHtml(new Date(dados.diaria_retirada_em).toLocaleString('pt-BR',{timeZone:dados.fuso}))}</p><p>Atraso: ${escapeHtml(dados.atraso_minutos)} min</p>`:''}<p class="valor-total">${dados.diaria_retirada_em?'Atraso a pagar':'Total'}: ${formatCurrency(dados.valor)}</p><p class="help-text">Valor confirmado pelo servidor. Cotação válida por 2 minutos.</p>`;
         closePopup('saidaPopup');
         if (dados.valor > 0) { resetSplitUI('splitPagamentoLista','splitPagamentoTotal','splitPagamentoRestante',dados.valor); openPopup('pagamentoPopup'); }
         else await processarSaida([]);
@@ -1185,7 +1221,7 @@ function updatePatioCarList() {
         const badge = ent.mensalista
             ? '<span class="badge mensalista">Mensalista</span>'
             : ent.diarista
-                ? '<span class="badge diarista">Diária</span>'
+                ? '<span class="badge diarista">Período</span>'
                 : '';
         const div = document.createElement('div');
         div.className = 'car-item';
@@ -1194,7 +1230,7 @@ function updatePatioCarList() {
                          <p><b>Modelo:</b> ${escapeHtml(ent.modelo)}</p>
                          <p><b>Cor:</b> ${escapeHtml(ent.cor)}</p>
                          <p><b>Tempo no Pátio:</b> ${tempoFormatado}</p>
-                         ${ent.diaria_retirada_em?`<p><b>Diária paga:</b> ${formatCurrency(ent.diaria_valor_pago)}</p><p><b>Retirar até:</b> ${escapeHtml(new Date(ent.diaria_retirada_em).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}))}</p>`:''}
+                         ${ent.diaria_retirada_em?`<p><b>Período pago:</b> ${formatCurrency(ent.diaria_valor_pago)}</p><p><b>Limite do período:</b> ${escapeHtml(new Date(ent.diaria_retirada_em).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}))}</p>`:''}
                          <p><b>${ent.mensalista?'Mensalidade':'Estimativa'}:</b> <span class="valor-devido">${ent.mensalista?'Conferir validade e eventual renovação na saída':`R$ ${total.toFixed(2)}`}</span></p>
                          <div class="card-actions">
                              <button class="btn-saida-card" data-entry-id="${escapeHtml(ent.entryId)}">Registrar Saída</button>
@@ -1223,7 +1259,7 @@ async function renderComprovanteEntrada(entrada) {
 
 function formatTipoRegistro(row) {
     if (row?.mensalista) return 'Mensalista';
-    if (row?.diarista) return 'Diária';
+    if (row?.diarista) return 'Período';
     return 'Avulso';
 }
 

@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {fail} from './financial-domain.js';
 import {seedLegacySubscriptions} from './subscription-domain.js';
+import {seedPeriodSettings} from './period-domain.js';
 const oldTables = ['configuracoes','mensalistas','historico','caixa_turnos','caixa_fechamentos','caixa_movimentos','auditoria','operacoes_financeiras','veiculos_cache'];
 const v2Tables = [...oldTables,'caixa_ajustes','caixa_conferencias','caixa_acoes'];
 const subscriptionTables=['mensalista_contratos','mensalista_veiculos','mensalista_cobrancas'];
@@ -68,6 +69,7 @@ export async function applyOperational(client,backup){
         if(keyColumn(table)==='id')await client.query(`SELECT setval(pg_get_serial_sequence('${table}','id'),COALESCE((SELECT MAX(id) FROM ${table}),1),(SELECT COUNT(*)>0 FROM ${table}))`);
     }
     if(backup.versao<3)await seedLegacySubscriptions(client);
+    await seedPeriodSettings(client);
 }
 export function recordCount(backup){return Object.values(backup.tabelas).reduce((n,rows)=>n+rows.length,0);}
 export const operationLock=743221910;

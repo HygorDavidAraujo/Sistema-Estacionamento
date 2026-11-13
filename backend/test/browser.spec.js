@@ -303,28 +303,25 @@ test('caixa pela interface: fundo, suprimento, sangria, diferença, aprovação 
     }
 });
 
-test('diária paga na entrada, horário combinado e cobrança somente do atraso, com impressão 58/80 mm',async({page})=>{
+test('período usa expediente sem escolher saída, preserva preço e imprime entrada/saída em 58 e 80 mm',async({page})=>{
     await page.evaluate(()=>{const open=window.open.bind(window);window.open=(...args)=>{const child=open(...args);if(child)child.print=()=>{child.__printed=true;};return child;};});
     const plate='PQR3S45';
-    const deadline=await page.evaluate(()=>{
-        const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(Date.now()+10*3600000)).map(p=>[p.type,p.value]));
-        return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
-    });
+    await page.evaluate(async()=>{await operationRequest('/__test/clock',{agora:'2026-11-13T11:00:00Z'});});
+    try{
     await page.click('#btnEntrada');await page.fill('#placaEntrada',plate);await expect(page.locator('#modeloEntrada')).not.toHaveValue('');
-    await page.check('#diaristaCheck');await expect(page.locator('#diariaRetirada')).toBeVisible();
-    await page.click('#registrarBtn');await expect(page.locator('#toastContainer')).toContainText('Informe a data e o horário');
-    await page.fill('#diariaRetirada',deadline);await page.click('#registrarBtn');
-    await expect(page.locator('#pagamentoPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#resumoPagamento')).toContainText('Diária antecipada');await expect(page.locator('#splitPagamentoTotal')).toHaveText('R$ 25.00');
+    await page.check('#diaristaCheck');await expect(page.locator('#diariaRetirada')).toHaveCount(0);await page.click('#registrarBtn');
+    await expect(page.locator('#pagamentoPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#resumoPagamento')).toContainText('Período pré-pago');await expect(page.locator('#resumoPagamento')).toContainText('18:00');await expect(page.locator('#resumoPagamento')).toContainText('sem desconto');await expect(page.locator('#splitPagamentoTotal')).toHaveText('R$ 25.00');
     expect(await page.evaluate(async plate=>(await(await apiFetch(`${BACKEND_BASE}/patio/ativos`)).json()).dados.some(row=>row.placa===plate),plate)).toBe(false);
     await page.selectOption('#splitPagamentoLista .split-forma','Dinheiro');await page.fill('#splitPagamentoLista .split-valor','10');await page.click('#addSplitPagamento');
     await page.locator('#splitPagamentoLista .split-forma').nth(1).selectOption('Pix');await page.click('#confirmarPagamentoBtn');
-    await expect(page.locator('#comprovanteEntradaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteEntrada')).toContainText('RETIRAR ATÉ');await expect(page.locator('#comprovanteEntrada')).toContainText('DIÁRIA PAGA');
+    await expect(page.locator('#comprovanteEntradaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteEntrada')).toContainText('LIMITE DO PERÍODO');await expect(page.locator('#comprovanteEntrada')).toContainText('PERÍODO PAGO');
     await expect(page.locator('#comprovanteEntrada')).toContainText('25,00');await expect(page.locator('#comprovanteEntrada')).not.toContainText('24 h');
     async function print(target,label,width){
         await page.locator(`#${target}`).locator('..').locator('.receipt-width').selectOption(width);
         const pending=page.waitForEvent('popup');await page.locator(`[data-receipt-print="${target}"]`).click();const popup=await pending;await popup.waitForFunction(()=>window.__printed);
-        const metrics=await popup.evaluate(()=>{const r=document.querySelector('.receipt');return {overflow:r.scrollWidth>Math.ceil(r.getBoundingClientRect().width),height:r.getBoundingClientRect().height};});
+        const metrics=await popup.evaluate(()=>{const r=document.querySelector('.receipt');return {overflow:r.scrollWidth>Math.ceil(r.getBoundingClientRect().width),height:r.getBoundingClientRect().height,limitHeight:r.querySelector('[data-period-limit]')?.getBoundingClientRect().height};});
         expect(metrics.overflow).toBe(false);expect(metrics.height*25.4/96).toBeLessThan(150);
+        if(metrics.limitHeight)expect(metrics.limitHeight).toBeLessThan(20);
         await expect(popup.locator('body')).toContainText('25,00');await expect(popup.locator('body')).not.toContainText('24 h');
         await popup.evaluate(()=>{window.onafterprint=null;});const pdf=await popup.pdf({path:`../artifacts/diaria-${label}-${width}mm.pdf`,preferCSSPageSize:true});expect((pdf.toString('latin1').match(/\/Type \/Page\b/g)||[]).length).toBe(1);
         await popup.screenshot({path:`../artifacts/diaria-${label}-${width}mm.png`,fullPage:true});await popup.close();
@@ -333,11 +330,10 @@ test('diária paga na entrada, horário combinado e cobrança somente do atraso,
     await page.locator('#comprovanteEntradaPopup [data-close]').click();
     await page.reload();await expect(page.locator('#connectionStatus')).toHaveText('Sincronizado');
     await page.evaluate(()=>{const open=window.open.bind(window);window.open=(...args)=>{const child=open(...args);if(child)child.print=()=>{child.__printed=true;};return child;};});
-    const card=page.locator('.car-item').filter({hasText:plate});await expect(card).toContainText('Retirar até:');await expect(card).toContainText('R$ 0.00');await expect(card.locator('.btn-cancel-card')).toHaveCount(0);
-    await card.locator('.btn-print-card').click();await expect(page.locator('#comprovanteEntrada')).toContainText('DIÁRIA PAGA');await page.locator('#comprovanteEntradaPopup [data-close]').click();
-    await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:661});});
-    try{
-        await card.locator('.btn-saida-card').click();await expect(page.locator('#pagamentoPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#resumoPagamento')).toContainText('Diária já paga: R$ 25.00');await expect(page.locator('#splitPagamentoTotal')).toHaveText('R$ 7.50');
+    const card=page.locator('.car-item').filter({hasText:plate});await expect(card).toContainText('Limite do período:');await expect(card).toContainText('R$ 0.00');await expect(card.locator('.btn-cancel-card')).toHaveCount(0);
+    await card.locator('.btn-print-card').click();await expect(page.locator('#comprovanteEntrada')).toContainText('PERÍODO PAGO');await page.locator('#comprovanteEntradaPopup [data-close]').click();
+    await page.evaluate(async()=>{await operationRequest('/__test/clock',{agora:'2026-11-13T22:01:00Z'});});
+        await card.locator('.btn-saida-card').click();await expect(page.locator('#pagamentoPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#resumoPagamento')).toContainText('Período já pago: R$ 25.00');await expect(page.locator('#splitPagamentoTotal')).toHaveText('R$ 7.50');
         await page.selectOption('#splitPagamentoLista .split-forma','Pix');await page.click('#confirmarPagamentoBtn');await expect(page.locator('#comprovantePermanenciaPopup')).toHaveAttribute('aria-hidden','false');
         await expect(page.locator('#comprovantePermanencia')).toContainText('PAGO NA SAÍDA');await expect(page.locator('#comprovantePermanencia')).toContainText('7,50');await expect(page.locator('#comprovantePermanencia')).toContainText('32,50');
         for(const width of ['80','58'])await print('comprovantePermanencia','saida',width);
@@ -345,10 +341,31 @@ test('diária paga na entrada, horário combinado e cobrança somente do atraso,
     }finally{await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:0});});}
 });
 
+test('configura expediente noturno e recebe período fixo sem desconto na saída antecipada',async({page})=>{
+    const original=await page.evaluate(async()=>(await(await apiFetch(`${BACKEND_BASE}/configuracoes`)).json()).dados);
+    try{
+        await page.click('#btnMenu');await expect(page.locator('label[for="valorDiaria"]')).toHaveText('Valor fixo do período (R$)');
+        await page.fill('#expedienteInicio','19:00');await page.fill('#expedienteFim','05:00');
+        await page.screenshot({path:'../artifacts/expediente-configuracao.png',fullPage:true});
+        page.once('dialog',dialog=>dialog.accept());await page.click('#saveConfigBtn');await expect(page.locator('#menu')).toHaveAttribute('aria-hidden','true');
+        await page.reload();await expect(page.locator('#connectionStatus')).toHaveText('Sincronizado');
+        await page.click('#btnMenu');await expect(page.locator('#expedienteInicio')).toHaveValue('19:00');await expect(page.locator('#expedienteFim')).toHaveValue('05:00');await page.locator('#menu [data-close]').click();
+        await page.evaluate(async()=>{await operationRequest('/__test/clock',{agora:'2026-11-14T04:00:00Z'});});
+        await page.click('#btnEntrada');await page.fill('#placaEntrada','ZAB8C90');await page.check('#diaristaCheck');await page.click('#registrarBtn');
+        await expect(page.locator('#resumoPagamento')).toContainText('19:00 a 05:00');await expect(page.locator('#resumoPagamento')).toContainText('05:00');await expect(page.locator('#splitPagamentoTotal')).toHaveText('R$ 25.00');
+        await page.selectOption('#splitPagamentoLista .split-forma','Pix');await page.click('#confirmarPagamentoBtn');await expect(page.locator('#comprovanteEntrada')).toContainText('PERÍODO PAGO');await expect(page.locator('#comprovanteEntrada')).toContainText('sem desconto');await page.locator('#comprovanteEntradaPopup [data-close]').click();
+        await page.locator('.car-item').filter({hasText:'ZAB8C90'}).locator('.btn-saida-card').click();await expect(page.locator('#comprovantePermanenciaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovantePermanencia')).toContainText('Sem cobrança adicional');await expect(page.locator('#comprovantePermanencia')).toContainText('25,00');
+        const total=await page.evaluate(async()=>(await(await apiFetch(`${BACKEND_BASE}/relatorios/financeiro?placa=ZAB8C90`)).json()).resumo.total);expect(Number(total)).toBe(25);
+    }finally{
+        await page.evaluate(async original=>{await operationRequest('/__test/clock',{advanceMinutes:0});await apiFetch(`${BACKEND_BASE}/configuracoes`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({expediente_inicio:original.expediente_inicio.valor,expediente_fim:original.expediente_fim.valor})});},original);
+    }
+});
+
 test('mensalista pela interface: contrato, parcial, quitação de 30 dias, avisos, relatório e exportação',async({page})=>{
     const plate='STU4V56';
     await page.click('#btnMensalistas');await page.click('#btnNovoMensalista');await page.fill('#mensalistaPlaca',plate);await page.fill('#mensalistaNomeForm','Cliente do plano de 30 dias');await page.fill('#mensalistaPlano','Plano família');await page.fill('#mensalistaValorContrato','275');await page.fill('#mensalistaVeiculos','VWX5Y67');await page.fill('#mensalistaLimite','1');await page.click('#btnSalvarMensalista');
     await page.fill('#mensalistasBusca',plate);await page.click('#btnBuscarMensalistas');await expect(page.locator('#mensalistasLista')).toContainText('Sem pagamento');
+    await expect(page.locator('#mensalistasLista [data-pay-id]')).toHaveCount(1);
     await page.locator('#mensalistasLista [data-pay-id]').click();await expect(page.locator('#mensalidadeValor')).toHaveValue('275.00');await page.fill('#mensalidadeReceber','100');await page.selectOption('#splitMensalidadeLista .split-forma','Pix');await page.click('#confirmarMensalidadeBtn');
     await expect(page.locator('#comprovanteMensalidadePopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteMensalidade')).toContainText('PAGAMENTO PARCIAL');await expect(page.locator('#comprovanteMensalidade')).toContainText('175,00');
     await page.evaluate(()=>{const open=window.open.bind(window);window.open=(...args)=>{const child=open(...args);if(child)child.print=()=>{child.__printed=true;};return child;};});
@@ -388,6 +405,61 @@ test('mensalista vencido renova pela tela de saída e preserva o período já qu
         await expect(page.locator('#comprovanteMensalidadePopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#continuarSaidaMensalista')).toBeVisible();await page.click('#continuarSaidaMensalista');
         await expect(page.locator('#comprovantePermanenciaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovantePermanencia')).toContainText('Sem cobrança');await expect(page.locator('.car-item').filter({hasText:plate})).toHaveCount(0);
     }finally{await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:0});});}
+});
+
+async function createPaidSubscriber(page,placa,veiculos=[]){
+    return page.evaluate(async({placa,veiculos})=>{
+        const c=(await operationRequest('/mensalistas',{placa,veiculos,nome:'Mensalista automático '+placa,valor_mensal:300,limite_simultaneo:1})).dados;
+        const q=(await operationRequest(`/mensalistas/${c.id}/cotacao`,{})).dados;
+        const shift=(await(await apiFetch(`${BACKEND_BASE}/caixa/turnos/atual`)).json()).dados.id;
+        await operationRequest('/mensalistas/pagamentos',{mensalista_id:c.id,meses:q.meses,revisao:q.revisao,cobranca_id:q.cobranca_id,periodo_previsto:q.fim_periodo,turno_id:shift,operacao_id:crypto.randomUUID(),pagamentos:[{forma_pagamento:'Pix',valor_pago:300}]});
+        return c;
+    },{placa,veiculos});
+}
+
+test('placa mensalista é reconhecida sem marcar opção, inclusive adicional, e sai sem cobrança',async({page})=>{
+    await createPaidSubscriber(page,'LMN2P34',['OPQ3R45']);
+    await page.click('#btnEntrada');await page.check('#diaristaCheck');await page.fill('#placaEntrada','lmn-2p34');
+    await expect(page.locator('#mensalistaCheck')).toBeChecked();await expect(page.locator('#mensalistaCheck')).toBeDisabled();
+    await expect(page.locator('#mensalistaNome')).toHaveValue('Mensalista automático LMN2P34');await expect(page.locator('#mensalistaLookupStatus')).toContainText('Pago até');
+    await expect(page.locator('#diaristaCheck')).not.toBeChecked();await expect(page.locator('#diaristaCheck')).toBeDisabled();
+    await page.fill('#placaEntrada','OPQ3R45');await expect(page.locator('#mensalistaCheck')).toBeChecked();await page.click('#registrarBtn');
+    await expect(page.locator('#comprovanteEntradaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovanteEntrada')).toContainText('Mensalista');
+    await page.locator('#comprovanteEntradaPopup [data-close]').click();const card=page.locator('.car-item').filter({hasText:'OPQ3R45'});await expect(card.locator('.badge')).toContainText('Mensalista');
+    await page.evaluate(async()=>{await operationRequest('/__test/prepare',{placa:'OPQ3R45',minutes:65});});
+    await card.locator('.btn-saida-card').click();await expect(page.locator('#comprovantePermanenciaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovantePermanencia')).toContainText('Sem cobrança');
+});
+
+test('reconhecimento avisa a vencer, hoje, vencido e suspenso sem liberar benefício indevido',async({page})=>{
+    const customer=await createPaidSubscriber(page,'RST4U56');await page.click('#btnEntrada');
+    try{
+        for(const [days,label,eligible]of [[28,'vence em até 2 dias',true],[30,'vence hoje',true],[31,'mensalidade vencida',false]]){
+            await page.evaluate(async days=>{await operationRequest('/__test/clock',{advanceMinutes:days*24*60});},days);
+            await page.fill('#placaEntrada','');await page.fill('#placaEntrada','RST4U56');
+            await expect(page.locator('#mensalistaLookupStatus')).toContainText(label);await expect(page.locator('#mensalistaCheck')).toBeChecked({checked:eligible});
+        }
+        await page.evaluate(async id=>{await operationRequest('/__test/clock',{advanceMinutes:0});await apiFetch(`${BACKEND_BASE}/mensalistas/${id}/status`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({estado:'suspenso',motivo:'Suspensão para verificar o reconhecimento automático'})});},customer.id);
+        await page.fill('#placaEntrada','');await page.fill('#placaEntrada','RST4U56');await expect(page.locator('#mensalistaLookupStatus')).toContainText('contrato suspenso');await expect(page.locator('#mensalistaCheck')).not.toBeChecked();
+        await page.click('#registrarBtn');await expect(page.locator('#comprovanteEntrada')).toContainText('Avulso');
+    }finally{await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:0});});}
+});
+
+test('resposta mensalista antiga é descartada ao trocar placa ou fechar a entrada',async({page})=>{
+    await createPaidSubscriber(page,'UVW5X67');
+    let signalStarted,release,signalFinished,started,finished;
+    function gate(){started=new Promise(resolve=>{signalStarted=resolve;});finished=new Promise(resolve=>{signalFinished=resolve;});}
+    gate();
+    await page.route('**/mensalistas/UVW5X67',async route=>{
+        const done=signalFinished;const response=await route.fetch();const held=new Promise(resolve=>{release=resolve;});signalStarted();await held;
+        try{await route.fulfill({response});}catch{}finally{done();}
+    });
+    await page.click('#btnEntrada');await page.fill('#placaEntrada','UVW5X67');await started;
+    await page.fill('#placaEntrada','YZA6B78');await expect(page.locator('#mensalistaLookupStatus')).toContainText('sem cadastro');release();await finished;
+    await expect(page.locator('#mensalistaCheck')).not.toBeChecked();await expect(page.locator('#mensalistaNome')).toHaveValue('');
+    gate();await page.fill('#placaEntrada','UVW5X67');await started;await page.locator('#entradaPopup [data-close]').click();release();await finished;
+    await expect(page.locator('#mensalistaCheck')).not.toBeChecked();await expect(page.locator('#mensalistaNome')).toHaveValue('');
+    await page.unroute('**/mensalistas/UVW5X67');await page.click('#btnEntrada');await expect(page.locator('#mensalistaCheck')).toBeChecked();
+    await page.screenshot({path:'../artifacts/mensalista-automatico.png',fullPage:true});
 });
 
 test('resposta de pagamento perdida: recarregar e consultar recupera o comprovante sem duplicar',async({page})=>{

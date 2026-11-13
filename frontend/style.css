@@ -479,7 +479,7 @@ main {
 .popup-content { width:100%; max-width:460px; background:#fff; padding:16px; border-radius:8px; position:relative; max-height:calc(100vh - 32px); overflow-y:auto; }
 .close { position:absolute; right:10px; top:8px; background:transparent; border:none; font-size:22px; cursor:pointer; }
 label { display:block; margin-top:10px; font-size:13px; color:#333; }
-input[type="text"], input[type="number"], select { width:100%; padding:8px 10px; margin-top:6px; border:1px solid #ddd; border-radius:6px; }
+input[type="text"], input[type="number"], input[type="time"], select { width:100%; padding:8px 10px; margin-top:6px; border:1px solid #ddd; border-radius:6px; }
 
 .help-text {
     margin: 6px 0 0 0;
@@ -644,7 +644,7 @@ button:hover { opacity:1; box-shadow:0 3px 10px #17344715; }
 .popup-content h3 { margin-top:0; font-size:22px; letter-spacing:-.4px; padding-right:25px; }
 .close { color:#576d7a; font-size:27px; padding:0 8px; }
 label { font-weight:600; color:var(--ink); font-size:12px; margin-top:14px; }
-input[type="text"],input[type="number"],select { padding:11px 12px; border:1px solid #d3dfe4; border-radius:9px; color:var(--ink); background:#fcfefe; font-size:14px; }
+input[type="text"],input[type="number"],input[type="time"],select { padding:11px 12px; border:1px solid #d3dfe4; border-radius:9px; color:var(--ink); background:#fcfefe; font-size:14px; }
 .plate-input { font-family:Consolas,monospace; font-weight:700; font-size:24px !important; letter-spacing:3px; text-transform:uppercase; }
 .lookup-status { padding:10px 12px; background:#eef4f6; color:#496475; border-radius:9px; font-size:12px; margin:9px 0 15px; }
 .lookup-status[data-state="success"] { background:#e7f5ed; color:#176443; }

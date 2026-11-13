@@ -1,9 +1,10 @@
 import express from 'express';
 import { createHash, randomBytes } from 'node:crypto';
-import { audit, fail, cents, payments, configValues, tariff, price, dailyDeadline, monthlyCoverageEnd, civilDate, operationKey, ticketId } from '../services/financial-domain.js';
+import { audit, fail, cents, payments, configValues, tariff, price, monthlyCoverageEnd, civilDate, operationKey, ticketId } from '../services/financial-domain.js';
 import { isValidPlate, normalizePlate } from '../services/plate-domain.js';
 import { lockShift } from '../services/cash-domain.js';
 import {lockSubscription,monthlyQuote,createInvoice} from '../services/subscription-domain.js';
+import {periodWindow} from '../services/period-domain.js';
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const operational = ['operador', 'supervisor', 'administrador'];
 export function createOperationsRouter({ query, tx, allow, timeZone = 'America/Sao_Paulo', clock = () => new Date() }) {
@@ -46,11 +47,11 @@ export function createOperationsRouter({ query, tx, allow, timeZone = 'America/S
         await client.query('INSERT INTO operacoes_financeiras (chave,tipo,referencia,usuario_id,requisicao_hash,resposta,turno_id) VALUES ($1,$2,$3,$4,$5,$6,$7)', [key,type,ref,user.id,hash,JSON.stringify(response),response.comprovante.turno_id]);
         await client.query('UPDATE caixa_turnos SET revisao=revisao+1 WHERE id=$1',[response.comprovante.turno_id]);
     }
-    router.post('/entrada/diaria/cotacao', allow(...operational), handle(async (req, res) => {
+    router.post(['/entrada/periodo/cotacao','/entrada/diaria/cotacao'], allow(...operational), handle(async (req, res) => {
         const result = await tx(async client => {
-            const now = clock(); const rates = tariff(await config(client));
-            if (rates.diaria <= 0) fail('Configure um valor de diária maior que zero',409);
-            return { valor: rates.diaria/100, retirada_em: dailyDeadline(req.body.retirada_em,now,timeZone), tarifa: rates, fuso: timeZone };
+            const now = clock(),settings=await config(client),rates=tariff(settings);
+            if (rates.diaria <= 0) fail('Configure um valor de período maior que zero',409);
+            return { valor: rates.diaria/100,...periodWindow(settings,now,timeZone),tarifa:rates,fuso:timeZone };
         });
         res.json({success:true,dados:result});
     }));
@@ -59,7 +60,7 @@ export function createOperationsRouter({ query, tx, allow, timeZone = 'America/S
         if (!isValidPlate(plate)) fail('Placa inválida. Use ABC1234 ou ABC1D23.');
         if (typeof req.body.mensalista !== 'undefined' && typeof req.body.mensalista !== 'boolean') fail('Tipo de cliente inválido');
         if (typeof req.body.diarista !== 'undefined' && typeof req.body.diarista !== 'boolean') fail('Tipo de cliente inválido');
-        if (req.body.mensalista && req.body.diarista) fail('Selecione apenas mensalista ou diária');
+        if (req.body.mensalista && req.body.diarista) fail('Selecione apenas mensalista ou período');
         const details = ['marca','modelo','cor'].map(field => {
             const value = String(req.body[field] || '').trim();
             if (value.length > (field === 'cor' ? 60 : 120)) fail('Dados do veículo muito longos');
@@ -74,13 +75,15 @@ export function createOperationsRouter({ query, tx, allow, timeZone = 'America/S
             await client.query('LOCK TABLE historico IN SHARE ROW EXCLUSIVE MODE');
             if ((await client.query("SELECT id FROM historico WHERE placa=$1 AND status='ativo'", [plate])).rows.length) fail('Este veículo já está no pátio', 409);
             const settings = await config(client); const rates = tariff(settings); const now = clock();
-            const deadline = key ? dailyDeadline(req.body.retirada_em,now,timeZone) : null;
-            if (key && rates.diaria <= 0) fail('Configure um valor de diária maior que zero',409);
+            const period=key?periodWindow(settings,now,timeZone):null;
+            const deadline = period?.retirada_em||null;
+            if (key && rates.diaria <= 0) fail('Configure um valor de período maior que zero',409);
             const normalized = key ? payments(req.body.pagamentos,rates.diaria) : [];
             const capacity = Number(settings.total_vagas);
             if (!Number.isInteger(capacity) || capacity < 1) fail('Capacidade não configurada', 503);
             if (Number((await client.query("SELECT COUNT(*)::int AS total FROM historico WHERE status='ativo'")).rows[0].total) >= capacity) fail('Estacionamento lotado', 409);
-            const subscriber = req.body.mensalista ? await monthly(client, plate, date(now)) : null;
+            const subscriber = await monthly(client, plate, date(now));
+            if (subscriber && req.body.diarista) fail('Placa reconhecida como mensalista com pagamento em dia. Registre a entrada como mensalista, sem cobrar período.',409);
             if (req.body.mensalista && !subscriber) fail('Mensalista sem contrato ativo e quitado. Regularize o cadastro ou registre como avulso.', 409);
             if(subscriber){
                 const occupied=(await client.query("SELECT COUNT(*)::int AS n FROM historico h WHERE status='ativo' AND mensalista=true AND (mensalista_id=$1 OR (mensalista_id IS NULL AND (placa=$2 OR EXISTS (SELECT 1 FROM mensalista_veiculos v WHERE v.mensalista_id=$1 AND v.placa=h.placa))))",[subscriber.id,subscriber.placa])).rows[0].n;
@@ -88,8 +91,8 @@ export function createOperationsRouter({ query, tx, allow, timeZone = 'America/S
             }
             const id = ticketId();
             const coverageEnd=subscriber?monthlyCoverageEnd(subscriber.validade,timeZone):null;
-            const receipt = { tipo: 'entrada', numero: id, placa: plate, marca: details[0], modelo: details[1], cor: details[2], entrada_em: now.toISOString(), categoria: subscriber ? 'Mensalista' : req.body.diarista ? 'Diária antecipada' : 'Avulso', tarifa: rates, empresa: company(settings), operador: req.user.nome, fuso: timeZone,mensalista_cobertura_ate:coverageEnd,
-                ...(key ? { diaria_retirada_em:deadline,diaria_valor_pago:rates.diaria/100,total:rates.diaria/100,pagamentos:normalized,turno_id:shift.id,operacao_id:key } : {}) };
+            const receipt = { tipo: 'entrada', numero: id, placa: plate, marca: details[0], modelo: details[1], cor: details[2], entrada_em: now.toISOString(), categoria: subscriber ? 'Mensalista' : req.body.diarista ? 'Período pré-pago' : 'Avulso', tarifa: rates, empresa: company(settings), operador: req.user.nome, fuso: timeZone,mensalista_cobertura_ate:coverageEnd,
+                ...(key ? { diaria_retirada_em:deadline,diaria_valor_pago:rates.diaria/100,periodo_expediente:period,total:rates.diaria/100,pagamentos:normalized,turno_id:shift.id,operacao_id:key } : {}) };
             const method = normalized.length > 1 ? 'Múltiplo' : normalized[0]?.forma_pagamento || null;
             const { rows } = await client.query(`INSERT INTO historico (entry_id,placa,marca,modelo,cor,data_entrada,hora_entrada,status,mensalista,diarista,cliente_nome,cliente_telefone,cliente_cpf,tarifa,criado_em,comprovante_entrada,diaria_retirada_em,diaria_valor_pago,valor_pago,forma_pagamento,mensalista_id,mensalista_cobertura_ate)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,'ativo',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$18,$19,$20) RETURNING id`,
@@ -98,7 +101,7 @@ export function createOperationsRouter({ query, tx, allow, timeZone = 'America/S
                 VALUES ('diaria',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[rows[0].id,plate,payment.valor_pago,payment.forma_pagamento,date(now),time(now),key,shift.id,req.user.id,req.user.nome]);
             await audit(client, req.user, 'entrada', { id: rows[0].id, entry_id: id, placa: plate, mensalista: Boolean(subscriber), diaria_retirada_em:deadline, operacao_id:key });
             if(key) await audit(client,req.user,'diaria_pagamento',{entry_id:id,turno_id:shift.id,operacao_id:key,total:rates.diaria/100,pagamentos:normalized,retirada_em:deadline});
-            const result = { success: true, id: rows[0].id, entry_id: id, criado_em: now.toISOString(), comprovante: receipt };
+            const result = { success: true, id: rows[0].id, entry_id: id, criado_em: now.toISOString(), mensalista:Boolean(subscriber),cliente_nome:subscriber?.nome||'',comprovante: receipt };
             if(key) await saveOperation(client,key,'diaria',rows[0].id,req.user,hash,result);
             return result;
         });
@@ -132,7 +135,7 @@ export function createOperationsRouter({ query, tx, allow, timeZone = 'America/S
             const entry = (await client.query("SELECT * FROM historico WHERE id=$1 AND status='ativo' FOR UPDATE", [row.historico_id])).rows[0];
             if (!entry) fail('Esta entrada já foi encerrada', 409);
             const quote = row.dados; const now = clock();
-            // A cotação não pode estender gratuitamente a diária além do combinado.
+            // A cotação não pode estender gratuitamente o período além do limite já pago.
             if (entry.diaria_retirada_em && entry.diaria_valor_pago != null && price(entry,entry.tarifa,now).valor_centavos !== quote.valor_centavos) fail('O valor do atraso mudou. Consulte novamente a saída.',409);
             const normalized = payments(req.body.pagamentos, quote.valor_centavos);
             if(entry.mensalista){const covered=await coverage(client,entry),eligible=Boolean(covered?.ate&&now<new Date(covered.ate));
@@ -145,7 +148,7 @@ export function createOperationsRouter({ query, tx, allow, timeZone = 'America/S
             await client.query("UPDATE historico SET status='saído',data_saida=$1,hora_saida=$2,valor_pago=$3,tempo_permanencia=$4,forma_pagamento=COALESCE($5,forma_pagamento) WHERE id=$6", [date(now),time(now),(cents(quote.valor)+cents(prepaid))/100,quote.tempo,historyMethod,entry.id]);
             for (const payment of normalized) await client.query(`INSERT INTO caixa_movimentos (origem,historico_id,placa,valor_pago,forma_pagamento,data_pagamento,hora_pagamento,operacao_chave,turno_id,operador_id,operador_nome)
                 VALUES ('saida',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [entry.id,entry.placa,payment.valor_pago,payment.forma_pagamento,date(now),time(now),key,shift.id,req.user.id,req.user.nome]);
-            const receipt = { ...quote, turno_id:shift.id, tipo: 'saida', tipo_cliente: quote.mensalista_vencido?'Mensalista · avulso após vencimento':({ mensalista:'Mensalista',diarista:quote.diaria_legada?'Diária legada':'Diária antecipada',avulso:'Avulso' })[quote.tipo], numero: key, ticket: entry.entry_id, pagamentos: normalized, saida_em: now.toISOString(), cobranca_ate: quote.saida_em, total: quote.valor };
+            const receipt = { ...quote, turno_id:shift.id, tipo: 'saida', tipo_cliente: quote.mensalista_vencido?'Mensalista · avulso após vencimento':({ mensalista:'Mensalista',diarista:quote.diaria_legada?'Período legado':'Período pré-pago',avulso:'Avulso' })[quote.tipo], numero: key, ticket: entry.entry_id, pagamentos: normalized, saida_em: now.toISOString(), cobranca_ate: quote.saida_em, total: quote.valor };
             const result = { success: true, entry_id: entry.entry_id, placa: entry.placa, valor_pago: quote.valor, comprovante: receipt };
             await audit(client, req.user, 'saida', { entry_id: entry.entry_id, operacao_id: key, total: quote.valor, pagamentos: normalized });
             await saveOperation(client,key,'saida',entry.id,req.user,hash,result);

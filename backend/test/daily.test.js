@@ -3,8 +3,21 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {dailyDeadline,price} from '../services/financial-domain.js';
 import {testServer} from './test-database.js';
+import {periodWindow,workHours} from '../services/period-domain.js';
 
 const rates={inicial:500,adicional:250,diaria:2500,tolerancia:15};
+test('período usa expediente, limita a dez horas e aceita expediente noturno no fuso do estacionamento',()=>{
+    const window=(time,settings={})=>periodWindow(settings,new Date(time));
+    assert.equal(window('2026-11-13T11:00:00Z').retirada_em,'2026-11-13T21:00:00.000Z');
+    assert.equal(window('2026-11-13T20:50:00Z').retirada_em,'2026-11-13T21:00:00.000Z');
+    assert.equal(window('2026-11-13T11:00:00Z',{expediente_inicio:'06:00',expediente_fim:'23:00'}).retirada_em,'2026-11-13T21:00:00.000Z');
+    const night={expediente_inicio:'18:00',expediente_fim:'04:00'};
+    const early=window('2026-11-14T04:00:00Z',night);assert.equal(early.inicio_expediente_em,'2026-11-13T21:00:00.000Z');assert.equal(early.retirada_em,'2026-11-14T07:00:00.000Z');
+    assert.equal(window('2026-12-31T23:00:00Z',night).retirada_em,'2027-01-01T07:00:00.000Z');
+    assert.equal(periodWindow({},new Date('2026-11-13T12:00:00Z'),'America/Manaus').retirada_em,'2026-11-13T22:00:00.000Z');
+    for(const time of ['2026-11-13T10:59:59Z','2026-11-13T21:00:00Z'])assert.throws(()=>window(time),error=>error.status===409);
+    for(const settings of [{expediente_inicio:'25:00'},{expediente_fim:'18:99'},{expediente_inicio:'18:00',expediente_fim:'18:00'}])assert.throws(()=>workHours(settings));
+});
 test('diária vale até o horário combinado e cobra somente horas de atraso pela tarifa avulsa',()=>{
     const entry={diarista:true,criado_em:'2026-11-13T11:00:00Z',diaria_retirada_em:'2026-11-13T21:00:00Z',diaria_valor_pago:'25.00'};
     for(const [time,amount] of [['20:59:59',0],['21:00:00',0],['21:00:01',500],['22:00:00',500],['22:00:01',750],['23:00:01',1000]]){
@@ -25,16 +38,25 @@ test('diária antecipada integra entrada, pagamentos, caixa, saída e backup sem
     await other.request('/auth/login','POST',{login:'outro',senha:'Senha-segura-123'});
     const post=(client,path,body)=>client.request(path,'POST',{operacao_id:randomUUID(),...body});
     const opening=await post(admin,'/caixa/turnos/abrir',{fundo_inicial:100});const shift=opening.data.turno_id;
-    const body={placa:'ABC1D23',diarista:true,retirada_em:'2026-11-13T18:00',operacao_id:randomUUID(),turno_id:shift,pagamentos:[{forma_pagamento:'Dinheiro',valor_pago:10},{forma_pagamento:'Pix',valor_pago:15}]};
+    const body={placa:'ABC1D23',diarista:true,operacao_id:randomUUID(),turno_id:shift,pagamentos:[{forma_pagamento:'Dinheiro',valor_pago:10},{forma_pagamento:'Pix',valor_pago:15}]};
     let entry,receipt,secondShift;
-    await t.test('exige turno próprio, horário futuro e pagamento integral calculado no servidor',async()=>{
-        const quote=await post(admin,'/entrada/diaria/cotacao',{retirada_em:body.retirada_em});assert.equal(quote.status,200);assert.equal(quote.data.dados.valor,25);assert.equal(quote.data.dados.retirada_em,'2026-11-13T21:00:00.000Z');
-        assert.equal((await post(admin,'/entrada',{...body,retirada_em:null})).status,400);
-        assert.equal((await post(admin,'/entrada',{...body,retirada_em:'2026-11-13T10:00:00Z'})).status,400);
+    await t.test('calcula horário automaticamente, exige turno próprio e pagamento integral',async()=>{
+        const quote=await post(admin,'/entrada/periodo/cotacao',{});assert.equal(quote.status,200);assert.equal(quote.data.dados.valor,25);assert.equal(quote.data.dados.retirada_em,'2026-11-13T21:00:00.000Z');
+        assert.equal((await post(admin,'/entrada/periodo/cotacao',{retirada_em:'2099-01-01T18:00'})).data.dados.retirada_em,quote.data.dados.retirada_em);
         assert.equal((await post(admin,'/entrada',{...body,turno_id:null})).status,409);
         assert.equal((await post(other,'/entrada',body)).status,403);
         assert.equal((await post(admin,'/entrada',{...body,pagamentos:[{forma_pagamento:'Dinheiro',valor_pago:1}]})).status,409);
         assert.equal((await system.db.query('SELECT COUNT(*)::int AS n FROM historico')).rows[0].n,0);
+    });
+    await t.test('configuração valida expediente, protege permissões e tarifa não muda conforme tempo restante',async()=>{
+        assert.equal((await other.request('/configuracoes','PUT',{expediente_inicio:'07:00',expediente_fim:'17:00'})).status,403);
+        for(const values of [{expediente_inicio:'25:00'},{expediente_inicio:'18:00'},{expediente_fim:'08:00'}])assert.equal((await admin.request('/configuracoes','PUT',values)).status,400);
+        assert.equal((await admin.request('/configuracoes','PUT',{expediente_inicio:'07:00',expediente_fim:'17:00'})).status,200);
+        assert.equal((await post(admin,'/entrada/periodo/cotacao',{})).data.dados.retirada_em,'2026-11-13T20:00:00.000Z');
+        await admin.request('/configuracoes','PUT',{expediente_inicio:'08:00',expediente_fim:'18:00'});
+        now=new Date('2026-11-13T20:50:00Z');const late=await post(admin,'/entrada/periodo/cotacao',{});assert.equal(late.data.dados.valor,25);assert.equal(late.data.dados.retirada_em,'2026-11-13T21:00:00.000Z');
+        now=new Date('2026-11-13T21:00:00Z');assert.equal((await post(admin,'/entrada',body)).status,409);
+        now=new Date('2026-11-13T11:00:00Z');
     });
     await t.test('falha em uma parcela desfaz entrada, recebimento e recibo; reenvio confirmado não duplica',async()=>{
         await system.pg.exec(`CREATE FUNCTION fail_daily() RETURNS trigger AS $$ BEGIN IF NEW.origem='diaria' AND NEW.forma_pagamento='Pix' THEN RAISE EXCEPTION 'test'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql;
@@ -43,9 +65,11 @@ test('diária antecipada integra entrada, pagamentos, caixa, saída e backup sem
         assert.equal((await system.db.query('SELECT COUNT(*)::int AS n FROM historico')).rows[0].n,0);
         assert.equal((await system.db.query('SELECT COUNT(*)::int AS n FROM caixa_movimentos')).rows[0].n,0);
         await system.pg.exec('DROP TRIGGER fail_daily ON caixa_movimentos; DROP FUNCTION fail_daily();');
-        const first=await post(admin,'/entrada',body);assert.equal(first.status,200,JSON.stringify(first.data));entry=first.data.entry_id;receipt=first.data.comprovante;
+        const tampered={...body,retirada_em:'2099-01-01T18:00:00Z'};
+        const first=await post(admin,'/entrada',tampered);assert.equal(first.status,200,JSON.stringify(first.data));entry=first.data.entry_id;receipt=first.data.comprovante;
+        body.retirada_em=tampered.retirada_em;
         assert.deepEqual((await post(admin,'/entrada',body)).data,first.data);
-        assert.equal(receipt.total,25);assert.equal(receipt.diaria_retirada_em,'2026-11-13T21:00:00.000Z');assert.equal(String(receipt.turno_id),String(shift));
+        assert.equal(receipt.total,25);assert.equal(receipt.diaria_retirada_em,'2026-11-13T21:00:00.000Z');assert.equal(String(receipt.turno_id),String(shift));assert.equal(receipt.categoria,'Período pré-pago');assert.equal(receipt.periodo_expediente.max_horas,10);
         assert.deepEqual((await admin.request(`/comprovantes/entrada/${entry}`)).data.dados,receipt);
         assert.deepEqual((await admin.request(`/comprovantes/operacao/${body.operacao_id}`)).data.dados,receipt);
         const summary=(await admin.request('/caixa/dashboard')).data.dados;assert.equal(summary.total_recebido,25);assert.equal(summary.total_dinheiro,10);assert.equal(summary.total_pix,15);assert.equal(summary.total_transacoes,1);assert.equal(summary.total_parcelas,2);assert.equal(summary.diarias,1);
@@ -58,6 +82,10 @@ test('diária antecipada integra entrada, pagamentos, caixa, saída e backup sem
         const result=await post(admin,'/saida',{cotacao_id:quote.cotacao_id,turno_id:shift,pagamentos:[]});assert.equal(result.status,200);assert.equal(result.data.comprovante.diaria_valor_pago,25);assert.equal(result.data.comprovante.total,0);
         assert.equal(Number((await system.db.query('SELECT valor_pago FROM historico WHERE entry_id=$1',[second.data.entry_id])).rows[0].valor_pago),25);
         const rows=(await admin.request('/caixa/relatorio')).data.dados;assert.equal(rows.reduce((n,r)=>n+Number(r.total),0),50);
+        assert.equal(result.data.comprovante.total+Number(result.data.comprovante.diaria_valor_pago),25);
+        await admin.request('/configuracoes','PUT',{expediente_fim:'16:00'});
+        assert.equal((await system.db.query('SELECT diaria_retirada_em FROM historico WHERE entry_id=$1',[entry])).rows[0].diaria_retirada_em.toISOString(),'2026-11-13T21:00:00.000Z');
+        await admin.request('/configuracoes','PUT',{expediente_fim:'18:00'});
     });
     await t.test('antecipação permanece no turno original e atraso é recebido pelo próximo operador',async()=>{
         const s=(await admin.request('/caixa/dashboard')).data.dados;

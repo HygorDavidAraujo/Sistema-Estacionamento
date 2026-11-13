@@ -44,19 +44,19 @@
         const vehicle = [receipt.marca,receipt.modelo,receipt.cor].filter(Boolean).join(' · ');
         if (vehicle) result += `<p class="center">${escape(vehicle)}</p>`;
         if (receipt.tipo === 'entrada') {
-            result += line('Entrada',formatDate(receipt.entrada_em,tz)) + line('Tipo',receipt.categoria);
+            result += line('Entrada',formatDate(receipt.entrada_em,tz)) + line('Tipo',String(receipt.categoria||'').replace('Diária antecipada','Período pré-pago').replace('Diária','Período'));
             const rates = receipt.tarifa;
             if (rates && receipt.categoria !== 'Mensalista') {
                 result += line(receipt.diaria_retirada_em?'Atraso: 1ª hora / adicional':'1ª hora / adicional',`${money(rates.inicial/100)} / ${money(rates.adicional/100)}`);
-                if(!receipt.diaria_retirada_em){result += line('Tolerância inicial',`${rates.tolerancia} min`);result += line('Diária antecipada',money(rates.diaria/100));}
+                if(!receipt.diaria_retirada_em){result += line('Tolerância inicial',`${rates.tolerancia} min`);result += line('Período pré-pago',money(rates.diaria/100));}
             }
-            if(receipt.diaria_retirada_em)result+=line('RETIRAR ATÉ',formatDate(receipt.diaria_retirada_em,tz),'total')+'<p class="small">Após o horário combinado: tarifa avulsa por hora iniciada, sem nova tolerância.</p>';
+            if(receipt.diaria_retirada_em)result+=`<div class="total center"><p class="small">LIMITE DO PERÍODO</p><p data-period-limit>${escape(formatDate(receipt.diaria_retirada_em,tz))}</p></div><p class="small">Saída livre até o limite. Preço fixo, sem desconto. Após o limite: tarifa avulsa por hora iniciada, sem nova tolerância.</p>`;
             if(receipt.mensalista_cobertura_ate)result+=line('Benefício mensalista até',formatDate(new Date(new Date(receipt.mensalista_cobertura_ate).getTime()-1).toISOString(),tz));
             result += `<div class="qr" id="${qrId}"></div><p class="center small">Apresente este ticket na saída.</p>`;
         } else if (receipt.tipo === 'saida') {
             result += line('Entrada',formatDate(receipt.entrada_em,tz)) + line('Saída',formatDate(receipt.saida_em,tz)) + line('Permanência',receipt.tempo);
-            result += line('Tipo',receipt.tipo_cliente || ({ mensalista:'Mensalista',diarista:'Diária antecipada',avulso:'Avulso' }[receipt.categoria]) || 'Avulso');
-            if(receipt.diaria_retirada_em)result+=line('Retirada combinada',formatDate(receipt.diaria_retirada_em,tz))+line('Pago na entrada',money(receipt.diaria_valor_pago))+line('Atraso',`${receipt.atraso_minutos} min`);
+            result += line('Tipo',String(receipt.tipo_cliente || ({ mensalista:'Mensalista',diarista:'Período pré-pago',avulso:'Avulso' }[receipt.categoria]) || 'Avulso').replace('Diária antecipada','Período pré-pago').replace('Diária','Período'));
+            if(receipt.diaria_retirada_em)result+=line('Limite do período',formatDate(receipt.diaria_retirada_em,tz))+line('Pago na entrada',money(receipt.diaria_valor_pago))+line('Atraso',`${receipt.atraso_minutos} min`);
             if(receipt.mensalista_vencido)result+=line('Avulso após',formatDate(receipt.mensalista_cobertura_ate,tz))+'<p class="small">Cliente optou por não renovar. Período já quitado preservado.</p>';
             if (receipt.cobranca_ate) result += line('Cálculo até',formatDate(receipt.cobranca_ate,tz));
         } else {
@@ -67,7 +67,7 @@
             if(receipt.pagamento_parcial)result+='<p class="small">PAGAMENTO PARCIAL: novo período ainda não liberado.</p>'+line('Saldo da cobrança',money(receipt.saldo_pendente));
         }
         if (receipt.tipo !== 'entrada' || receipt.diaria_retirada_em) {
-            result += line(receipt.diaria_retirada_em?(receipt.tipo==='entrada'?'DIÁRIA PAGA':'PAGO NA SAÍDA'):'TOTAL PAGO',money(receipt.total),'total');
+            result += line(receipt.diaria_retirada_em?(receipt.tipo==='entrada'?'PERÍODO PAGO':'PAGO NA SAÍDA'):'TOTAL PAGO',money(receipt.total),'total');
             for (const payment of receipt.pagamentos || []) result += line(payment.forma_pagamento,money(payment.valor_pago));
             if (!(receipt.pagamentos || []).length) result += `<p class="small">${receipt.diaria_retirada_em?'Sem cobrança adicional.':'Sem cobrança, conforme regra da permanência.'}</p>`;
             if(receipt.tipo==='saida'&&receipt.diaria_retirada_em)result+=line('Total da permanência',money((Math.round(receipt.diaria_valor_pago*100)+Math.round(receipt.total*100))/100));

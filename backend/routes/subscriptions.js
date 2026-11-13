@@ -144,7 +144,10 @@ export function createSubscriptionsRouter({query,tx,allow,clock=()=>new Date(),t
     router.get('/mensalistas/:placa',handle(async(req,res)=>{
         const plate=normalizePlate(req.params.placa);if(!isValidPlate(plate))fail('Placa inválida');
         const rows=(await query(`WITH d AS (${dataset}) SELECT * FROM d WHERE placa=$2 OR veiculos::jsonb ? $2`,[today(),plate])).rows;
-        if(rows.length!==1)fail('Mensalista não encontrado',404);const row=rows[0];res.json({success:true,dados:{...row,vencimento:row.pago_ate_iso||row.validade||null,inicio:row.inicio_iso}});
+        if(rows.length!==1)fail('Mensalista não encontrado',404);
+        const row=rows[0],contract=row.contrato_id?{estado:row.estado,validade:row.pago_ate_iso,inicio_iso:row.inicio_iso}:null;
+        const situacao=subscriptionState(row,contract,today());
+        res.json({success:true,dados:{...row,situacao,acesso_liberado:['em_dia','a_vencer','vence_hoje'].includes(situacao),vencimento:contract?contract.validade:row.validade||null,inicio:row.inicio_iso}});
     }));
     return router;
 }

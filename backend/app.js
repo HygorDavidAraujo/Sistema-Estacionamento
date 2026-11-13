@@ -22,6 +22,7 @@ import { createReportsRouter } from './routes/reports.js';
 import {createOperationalService} from './services/operational-service.js';
 import {createOperationalRouter} from './routes/operational.js';
 import {operationLock} from './services/backup-domain.js';
+import {workHours,seedPeriodSettings} from './services/period-domain.js';
 
 export function createApp({ db, env = process.env, setupToken = env.AUTH_SETUP_TOKEN || env.ADMIN_TOKEN || '', clock, plateFetch, readinessOptions = {},backupStorage } = {}) {
 const { initDb, query, tx:baseTx } = db;
@@ -430,11 +431,16 @@ app.put('/configuracoes',async(req,res,next)=>{
             } else if(key==='total_vagas' || key==='tempo_tolerancia'){
                 const number=Number(value); const min=key==='total_vagas'?1:0; const max=key==='total_vagas'?100000:120;
                 if(!Number.isInteger(number)||number<min||number>max) fail(`Configuração inválida: ${key}`);
+            } else if(['expediente_inicio','expediente_fim'].includes(key)){
+                if(typeof value!=='string'||!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value))fail('Horário de expediente inválido');
             } else if(Object.hasOwn(text,key)){
                 if(typeof value!=='string'||value.length>text[key]||key==='nome_estacionamento'&&!value.trim()) fail(`Configuração inválida: ${key}`);
             } else fail(`Configuração desconhecida: ${key}`);
         }
         await tx(async client=>{
+            await seedPeriodSettings(client);
+            const hours=(await client.query("SELECT chave,valor FROM configuracoes WHERE chave IN ('expediente_inicio','expediente_fim') FOR UPDATE")).rows;
+            workHours({...Object.fromEntries(hours.map(row=>[row.chave,row.valor])),...values});
             const before=(await client.query('SELECT chave,valor FROM configuracoes WHERE chave=ANY($1::text[])',[Object.keys(values)])).rows;
             for(const[key,value]of Object.entries(values)) await client.query('UPDATE configuracoes SET valor=$1,atualizado_em=NOW() WHERE chave=$2',[String(value),key]);
             await audit(client,req.user,'configuracoes_update',{antes:before,depois:values});

@@ -1,5 +1,7 @@
 # Diária antecipada até o fechamento
 
+**Referência histórica:** a escolha manual de retirada descrita abaixo foi substituída pelo [Período pré-pago com expediente configurável](PERIODO_EXPEDIENTE.md). Novas entradas calculam o limite automaticamente, por até 10 horas e limitado ao fechamento, com preço fixo sem desconto por saída antecipada. Registros emitidos sob a regra anterior preservam seus limites e pagamentos.
+
 Correção local em 13/11/2026 conforme a definição do usuário: a diária vale até o horário de fechamento combinado pelo operador, com pagamento antecipado. A referência de dez horas não é um período fixo de cobrança. O usuário também definiu que atrasos devem ser cobrados pela tarifa avulsa.
 
 ## Atendimento

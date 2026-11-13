@@ -20,7 +20,7 @@
         if(!stateKnown)throw Error('Atualize a conexão para conferir a disponibilidade antes de confirmar a operação.');
         const id=body.operacao_id,records=read(),old=records.find(row=>row.id===id);
         if(old&&old.body!==options.body)throw Error('Esta confirmação está pendente com outros dados. Consulte o resultado original antes de alterar o pagamento.');
-        if(!old){if(records.length>=20)throw Error('Confira as confirmações pendentes antes de iniciar outra.');records.push({id,path,body:options.body,criado_em:new Date().toISOString(),label:path==='/saida'?'Saída':path==='/entrada'?'Diária antecipada':path==='/mensalistas/pagamentos'?'Mensalidade':'Operação de caixa'});}
+        if(!old){if(records.length>=20)throw Error('Confira as confirmações pendentes antes de iniciar outra.');records.push({id,path,body:options.body,criado_em:new Date().toISOString(),label:path==='/saida'?'Saída':path==='/entrada'?'Período pré-pago':path==='/mensalistas/pagamentos'?'Mensalidade':'Operação de caixa'});}
         localStorage.setItem(key(actor),JSON.stringify(records));pendingUI();return id;
     }
     function resolvePending(id){if(!AuthService.user)return;localStorage.setItem(key(AuthService.user),JSON.stringify(read().filter(r=>r.id!==id)));pendingUI();}

@@ -8,7 +8,7 @@ No início do atendimento, confira acesso individual, turno do responsável e p�
 
 Ao final de cada expediente, use **Baixar backup operacional** e guarde o arquivo em local seguro fora da hospedagem. Com `BACKUP_ENCRYPTION_KEY` configurada, baixe também o **backup completo cifrado**, que inclui usuários e permite recuperar o banco em outro destino vazio. Guarde a chave separadamente e ensaie a recuperação. O teste de integridade não substitui o ensaio de restauração. Não há envio automático, Blob ou contratação de armazenamento no modo manual.
 
-Atalhos: **F2 entrada · F4 saída · F6 mensalistas · F8 turno**. A cobrança da diária, os períodos pré-pagos de 30 dias e a operação de um caixa por vez continuam com as regras dos passos anteriores.
+Atalhos: **F2 entrada · F4 saída · F6 mensalistas · F8 turno**. O [período pré-pago](PERIODO_EXPEDIENTE.md) usa preço fixo e expediente configurável, com limite automático de até 10 horas. Mensalidades continuam com 30 dias por período quitado e a operação usa um caixa por vez.
 
 ## Internet ou banco indisponível
 

@@ -41,7 +41,7 @@ test('API recupera 503 na mesma instância quando o banco volta, sem abrir opera
 function pgPool(pg){
     return {connect:async()=>({query:async(sql,params=[])=>params.length?pg.query(sql,params):(await pg.exec(sql)).at(-1),release(){}})};
 }
-const sqlFiles=['migrations/000-compatibility.sql','schema.sql','migrations/001-security.sql','migrations/002-cash-shifts.sql','migrations/003-prepaid-daily.sql','migrations/004-subscriptions-reports.sql','migrations/005-operational-recovery.sql'];
+const sqlFiles=['migrations/000-compatibility.sql','schema.sql','migrations/001-security.sql','migrations/002-cash-shifts.sql','migrations/003-prepaid-daily.sql','migrations/004-subscriptions-reports.sql','migrations/005-operational-recovery.sql','migrations/006-work-period.sql'];
 const schemaSql=async()=> (await Promise.all(sqlFiles.map(file=>readFile(new URL(`../${file}`,import.meta.url),'utf8')))).join('\n');
 test('migração de banco existente preserva dados, registra versão e evita repetir DDL',async t=>{
     const pg=await PGlite.create();t.after(()=>pg.close());
@@ -66,9 +66,20 @@ test('falha durante migração reverte schema e marcador, permitindo tentativa c
     assert.equal((await pg.query('SELECT versao FROM estacionamento_migracoes')).rows[0].versao,schemaVersion);
 });
 
+test('migração do período preserva tarifas e comprovantes anteriores e prepara expediente sem sobrescrever horário',async t=>{
+    const pg=await PGlite.create();t.after(()=>pg.close());
+    for(const file of sqlFiles.filter(file=>!file.includes('006-work-period')))await pg.exec(await readFile(new URL(`../${file}`,import.meta.url),'utf8'));
+    await pg.exec("CREATE TABLE estacionamento_migracoes (versao TEXT PRIMARY KEY, aplicado_em TIMESTAMPTZ DEFAULT NOW()); INSERT INTO estacionamento_migracoes (versao) VALUES ('005-operational-recovery'); INSERT INTO configuracoes(chave,valor) VALUES ('expediente_inicio','07:30'); INSERT INTO historico(entry_id,placa,diarista,diaria_retirada_em,diaria_valor_pago,comprovante_entrada) VALUES ('before-period','ABC1D23',true,'2026-11-13T23:00Z',25,'{\"categoria\":\"Diária antecipada\"}');");
+    await createDatabaseInitializer({pool:pgPool(pg),loadSql:schemaSql})();
+    const values=Object.fromEntries((await pg.query('SELECT chave,valor FROM configuracoes')).rows.map(r=>[r.chave,r.valor]));
+    assert.equal(values.expediente_inicio,'07:30');assert.equal(values.expediente_fim,'18:00');assert.equal(values.valor_diaria,'25.00');
+    const entry=(await pg.query("SELECT diaria_retirada_em,diaria_valor_pago,comprovante_entrada FROM historico WHERE entry_id='before-period'")).rows[0];
+    assert.equal(entry.diaria_retirada_em.toISOString(),'2026-11-13T23:00:00.000Z');assert.equal(Number(entry.diaria_valor_pago),25);assert.equal(entry.comprovante_entrada.categoria,'Diária antecipada');
+});
+
 test('migração de diária preserva caixa aberto e mantém diárias anteriores sem pagamento presumido',async t=>{
     const pg=await PGlite.create();t.after(()=>pg.close());
-    for(const file of sqlFiles.filter(file=>!file.includes('003-prepaid-daily')&&!file.includes('004-subscriptions-reports')&&!file.includes('005-operational-recovery')))await pg.exec(await readFile(new URL(`../${file}`,import.meta.url),'utf8'));
+    for(const file of sqlFiles.filter(file=>!file.includes('003-prepaid-daily')&&!file.includes('004-subscriptions-reports')&&!file.includes('005-operational-recovery')&&!file.includes('006-work-period')))await pg.exec(await readFile(new URL(`../${file}`,import.meta.url),'utf8'));
     await pg.exec("CREATE TABLE estacionamento_migracoes (versao TEXT PRIMARY KEY, aplicado_em TIMESTAMPTZ DEFAULT NOW()); INSERT INTO estacionamento_migracoes (versao) VALUES ('002-cash-shifts'); INSERT INTO caixa_turnos (estado,operador_id,operador_nome,fundo_inicial) VALUES ('aberto',1,'Responsável anterior',100); INSERT INTO historico (entry_id,placa,diarista) VALUES ('daily-legacy','ABC1D23',true);");
     const initialize=createDatabaseInitializer({pool:pgPool(pg),loadSql:schemaSql});await initialize();
     const shift=(await pg.query('SELECT * FROM caixa_turnos')).rows[0];assert.equal(shift.estado,'aberto');assert.equal(Number(shift.fundo_inicial),100);assert.equal(shift.operador_nome,'Responsável anterior');
@@ -77,7 +88,7 @@ test('migração de diária preserva caixa aberto e mantém diárias anteriores 
 
 test('migração de contratos preserva validade quitada sem gerar dívida ou recibo retroativo',async t=>{
     const pg=await PGlite.create();t.after(()=>pg.close());
-    for(const file of sqlFiles.filter(file=>!file.includes('004-subscriptions-reports')&&!file.includes('005-operational-recovery')))await pg.exec(await readFile(new URL(`../${file}`,import.meta.url),'utf8'));
+    for(const file of sqlFiles.filter(file=>!file.includes('004-subscriptions-reports')&&!file.includes('005-operational-recovery')&&!file.includes('006-work-period')))await pg.exec(await readFile(new URL(`../${file}`,import.meta.url),'utf8'));
     await pg.exec("CREATE TABLE estacionamento_migracoes (versao TEXT PRIMARY KEY, aplicado_em TIMESTAMPTZ DEFAULT NOW()); INSERT INTO estacionamento_migracoes (versao) VALUES ('003-prepaid-daily'); INSERT INTO mensalistas (placa,nome,vencimento,criado_em) VALUES ('ABC1D23','Cliente anterior','2027-01-31','2026-11-01T12:00:00Z');");
     const initialize=createDatabaseInitializer({pool:pgPool(pg),loadSql:schemaSql});await initialize();
     const contract=(await pg.query("SELECT TO_CHAR(pago_ate,'YYYY-MM-DD') AS pago_ate,TO_CHAR(inicio,'YYYY-MM-DD') AS inicio FROM mensalista_contratos")).rows[0];

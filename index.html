@@ -224,13 +224,12 @@
 
         <div class="inline-actions tipo-cliente">
             <label class="checkbox-item"><input id="mensalistaCheck" type="checkbox" /> Mensalista?</label>
-            <label class="checkbox-item"><input id="diaristaCheck" type="checkbox" /> Diária?</label>
+            <label class="checkbox-item"><input id="diaristaCheck" type="checkbox" /> Período pré-pago?</label>
         </div>
+        <p id="mensalistaLookupStatus" class="lookup-status" role="status" aria-live="polite">A placa será consultada automaticamente no cadastro de mensalistas.</p>
 
         <div id="diaristaFields" hidden>
-            <label for="diariaRetirada">Retirar até (data e horário do estacionamento)</label>
-            <input id="diariaRetirada" type="datetime-local" />
-            <p class="help-text">Diária paga na entrada, válida até o horário combinado de fechamento. Após esse horário, cobra-se o atraso pela tarifa avulsa, por hora iniciada.</p>
+            <p class="help-text">Preço fixo pago na entrada, sem desconto por saída antecipada. Válido por até 10 horas da entrada, limitado ao fechamento do expediente configurado. O limite será informado antes do pagamento. Após esse limite, cobra-se o excedente pela tarifa avulsa.</p>
         </div>
 
         <div id="mensalistaFields" class="mensalista-fields" aria-hidden="true">
@@ -428,8 +427,11 @@
         <label for="valorMensalidade">Valor Mensalidade (R$)</label>
         <input id="valorMensalidade" type="number" step="0.01" />
 
-        <label for="valorDiaria">Valor Diária (R$)</label>
+        <label for="valorDiaria">Valor fixo do período (R$)</label>
         <input id="valorDiaria" type="number" step="0.01" />
+        <label for="expedienteInicio">Início do expediente</label><input id="expedienteInicio" type="time" required />
+        <label for="expedienteFim">Fim do expediente</label><input id="expedienteFim" type="time" required />
+        <p class="help-text">O período termina no fechamento ou após 10 horas da entrada, o que ocorrer primeiro. Pode configurar expediente que termine no dia seguinte. Saída antecipada não dá desconto.</p>
 
         <div class="inline-actions">
             <button id="btnBackupExport" type="button">Exportar Backup</button>
@@ -620,7 +622,7 @@
                 <select id="filtroTipo">
                     <option value="">Todos</option>
                     <option value="mensalista">Mensalista</option>
-                    <option value="diarista">Diária</option>
+                    <option value="diarista">Período</option>
                     <option value="avulso">Avulso</option>
                 </select>
                 
@@ -665,7 +667,7 @@
             
             <label for="dataFimCaixa">Data Fim:</label>
             <input type="date" id="dataFimCaixa" />
-            <label for="relatorioOrigem">Origem</label><select id="relatorioOrigem"><option value="">Todas</option><option value="saida">Saída / atraso</option><option value="diaria">Diária antecipada</option><option value="mensalidade">Mensalidade</option></select>
+            <label for="relatorioOrigem">Origem</label><select id="relatorioOrigem"><option value="">Todas</option><option value="saida">Saída / excedente</option><option value="diaria">Período pré-pago</option><option value="mensalidade">Mensalidade</option></select>
             <label for="relatorioForma">Meio de pagamento</label><select id="relatorioForma"><option value="">Todos</option><option>Dinheiro</option><option>Pix</option><option>Cartão de Crédito</option><option>Cartão de Débito</option></select>
             <label for="relatorioTurno">Turno</label><input id="relatorioTurno" type="number" min="1" />
             <label for="relatorioPlaca">Placa</label><input id="relatorioPlaca" type="text" maxlength="8" />

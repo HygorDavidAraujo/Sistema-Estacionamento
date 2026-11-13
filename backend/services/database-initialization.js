@@ -1,4 +1,4 @@
-export const schemaVersion = '005-operational-recovery';
+export const schemaVersion = '006-work-period';
 const migrationLock = 743221905;
 
 export function createDatabaseInitializer({ pool, loadSql, onApplied = () => {} }) {

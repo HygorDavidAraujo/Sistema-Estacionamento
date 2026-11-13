@@ -95,12 +95,12 @@ export function createReportsRouter({query,tx,allow,timeZone='America/Sao_Paulo'
             ['Critério','Data de recebimento','Total recebido',data.resumo.total,'Recebimentos',data.resumo.recebimentos,'Parcelas',data.resumo.parcelas],
             ['Filtros aplicados',JSON.stringify(req.query)],
             ['Data','Origem','Placa','Cliente','Operador','Turno','Total','Parcelas','Pagamentos','Operação','Legado'],
-            ...data.dados.map(r=>[r.data_ref,r.origem,r.placa,r.cliente,r.operador,r.turno_id,r.total,r.parcelas,r.pagamentos.map(p=>`${p.forma}: ${p.valor}`).join(' / '),r.operacao_id,r.legado?'Sim':'Não'])]));
+            ...data.dados.map(r=>[r.data_ref,r.origem==='diaria'?'Período':r.origem,r.placa,r.cliente,r.operador,r.turno_id,r.total,r.parcelas,r.pagamentos.map(p=>`${p.forma}: ${p.valor}`).join(' / '),r.operacao_id,r.legado?'Sim':'Não'])]));
     }));
     router.get('/relatorios/historico.csv',allow(...financeRoles),handle(async(req,res)=>{
         const data=await vehicles(req.query,true);if(data.dados.length>20000)fail('Refine o período para exportar até 20 mil permanências',413);
         await tx(client=>audit(client,req.user,'historico_exportacao',{filtros:req.query,registros:data.dados.length}));
-        res.type('text/csv').attachment('permanencias.csv').send(csvText([['Critério de data',data.criterio],['Filtros aplicados',JSON.stringify(req.query)],['Ticket','Placa','Categoria','Entrada','Saída','Situação','Total da permanência','Operador'],...data.dados.map(r=>[r.entry_id,r.placa,r.mensalista?'Mensalista':r.diarista?'Diária':'Avulso',`${r.data_entrada} ${r.hora_entrada}`,r.data_saida?`${r.data_saida} ${r.hora_saida}`:'',r.status,r.valor_pago,r.operador_entrada])]));
+        res.type('text/csv').attachment('permanencias.csv').send(csvText([['Critério de data',data.criterio],['Filtros aplicados',JSON.stringify(req.query)],['Ticket','Placa','Categoria','Entrada','Saída','Situação','Total da permanência','Operador'],...data.dados.map(r=>[r.entry_id,r.placa,r.mensalista?'Mensalista':r.diarista?'Período':'Avulso',`${r.data_entrada} ${r.hora_entrada}`,r.data_saida?`${r.data_saida} ${r.hora_saida}`:'',r.status,r.valor_pago,r.operador_entrada])]));
     }));
     router.get('/relatorios/receber',allow(...financeRoles),handle(async(req,res)=>{
         const p=paging(req.query),f=filters(req.query,'b.vencimento');f.parts.push("b.estado IN ('aberta','parcial')");
