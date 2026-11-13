@@ -89,8 +89,11 @@ test('acesso, permissões, cobranças, transações e restore com PostgreSQL iso
         assert.equal((await admin.request('/restore','POST',{backup,confirmacao:'RESTAURAR',senha:'errada'})).status,403);
         const bad=structuredClone(backup); bad.tabelas.historico=[];
         assert.equal((await admin.request('/restore','POST',{backup:bad,confirmacao:'RESTAURAR',senha:'Senha-segura-123'})).status,400);
+        await admin.request('/operacao/manutencao','POST',{ativo:true,motivo:'Restauração de teste em banco isolado'});
         const restored=await admin.request('/restore','POST',{backup,confirmacao:'RESTAURAR',senha:'Senha-segura-123'});
         assert.equal(restored.status,200,JSON.stringify(restored.data));
+        await admin.request('/operacao/manutencao','POST',{ativo:false,motivo:'Conferência de teste concluída com sucesso'});
+        await operator.request('/auth/login','POST',{login:'operador',senha:'Senha-operador-123'});
         assert.equal((await operator.request('/entrada','POST',{placa:'GHI7J89'})).status,200);
     });
     await t.test('limita falhas repetidas sem bloquear sucessivos logins corretos de funcionários',async()=>{

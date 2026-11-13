@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 import { attachDatabasePool } from '@vercel/functions';
 import { createDatabaseInitializer } from './services/database-initialization.js';
+import {postgresOptions} from './services/postgres-options.js';
 
 const { Pool } = pg;
 
@@ -19,14 +20,13 @@ function timeout(name, fallback) {
 }
 
 const pool = new Pool({
-    connectionString,
+    ...postgresOptions(process.env),
     max: 5,
     connectionTimeoutMillis: timeout('PG_CONNECTION_TIMEOUT_MS', 15000),
     idleTimeoutMillis: 10000,
     query_timeout: timeout('PG_QUERY_TIMEOUT_MS', 15000),
     keepAlive: true,
-    allowExitOnIdle: true,
-    ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined
+    allowExitOnIdle: true
 });
 if (process.env.VERCEL) attachDatabasePool(pool);
 pool.on('error', error => console.error('[BACK] Falha de conexão ociosa:', error.code || 'DATABASE_CONNECTION_ERROR'));
@@ -41,13 +41,14 @@ export const initDb = createDatabaseInitializer({
         'schema.sql',
         'migrations/001-security.sql',
         'migrations/002-cash-shifts.sql',
-        'migrations/003-prepaid-daily.sql','migrations/004-subscriptions-reports.sql'
+        'migrations/003-prepaid-daily.sql','migrations/004-subscriptions-reports.sql','migrations/005-operational-recovery.sql'
     ].map(file => fs.readFile(resolve(__dirname, file), 'utf8')))).join('\n'),
     onApplied: () => console.log('[BACK] Schema aplicado com sucesso')
 });
 export async function query(text, params = []) {
     return pool.query(text, params);
 }
+export async function close(){await pool.end();}
 
 export async function tx(work) {
     const client = await pool.connect();

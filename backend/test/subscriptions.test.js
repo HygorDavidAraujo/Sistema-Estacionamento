@@ -78,11 +78,16 @@ test('contratos pré-pagos, veículos, cobrança parcial, avisos e backup',async
     await t.test('backup versão 3 mantém vínculos, cobranças e recibos; versão 2 preserva validades sem inventar dívida',async()=>{
         const backup=(await admin.request('/backup')).data.dados;assert.equal(backup.versao,3);
         for(const table of ['mensalista_contratos','mensalista_veiculos','mensalista_cobrancas'])assert.ok(backup.tabelas[table].length);
+        await admin.request('/operacao/manutencao','POST',{ativo:true,motivo:'Restauração de teste em banco isolado'});
         assert.equal((await admin.request('/restore','POST',{backup,confirmacao:'RESTAURAR',senha:'Senha-segura-123'})).status,200);
+        await admin.request('/operacao/manutencao','POST',{ativo:false,motivo:'Conferência de teste concluída com sucesso'});
+        await operator.request('/auth/login','POST',{login:'operador',senha:'Senha-segura-123'});
         assert.deepEqual((await operator.request(`/comprovantes/operacao/${original.numero}`)).data.dados,original);
         const old=structuredClone(backup);old.versao=2;for(const table of ['mensalista_contratos','mensalista_veiculos','mensalista_cobrancas'])delete old.tabelas[table];
         old.checksum=createHash('sha256').update(JSON.stringify(old.tabelas)).digest('hex');
+        await admin.request('/operacao/manutencao','POST',{ativo:true,motivo:'Restauração de teste em banco isolado'});
         assert.equal((await admin.request('/restore','POST',{backup:old,confirmacao:'RESTAURAR',senha:'Senha-segura-123'})).status,200);
+        await admin.request('/operacao/manutencao','POST',{ativo:false,motivo:'Conferência de teste concluída com sucesso'});
         assert.equal((await system.db.query('SELECT COUNT(*)::int AS n FROM mensalista_contratos')).rows[0].n,1);
         const detail=(await admin.request(`/mensalistas/${id}/financeiro`)).data.dados;assert.equal(detail.cobrancas.length,0);assert.equal(detail.contrato.validade,'2027-01-20');
     });

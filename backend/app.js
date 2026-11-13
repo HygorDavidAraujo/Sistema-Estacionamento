@@ -3,6 +3,7 @@ import cors from "cors";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 import { AsyncLocalStorage } from 'node:async_hooks';
+import {randomUUID} from 'node:crypto';
 import { createPlateRouter } from "./routes/plates.js";
 import { createVehicleRepository } from "./services/vehicle-repository.js";
 import { isValidPlate } from "./services/plate-domain.js";
@@ -18,13 +19,35 @@ import { createDatabaseReadiness, initializationFailure } from './services/datab
 import { createCashRouter } from './routes/cash.js';
 import { createSubscriptionsRouter } from './routes/subscriptions.js';
 import { createReportsRouter } from './routes/reports.js';
+import {createOperationalService} from './services/operational-service.js';
+import {createOperationalRouter} from './routes/operational.js';
+import {operationLock} from './services/backup-domain.js';
 
-export function createApp({ db, env = process.env, setupToken = env.AUTH_SETUP_TOKEN || env.ADMIN_TOKEN || '', clock, plateFetch, readinessOptions = {} } = {}) {
-const { initDb, query, tx } = db;
+export function createApp({ db, env = process.env, setupToken = env.AUTH_SETUP_TOKEN || env.ADMIN_TOKEN || '', clock, plateFetch, readinessOptions = {},backupStorage } = {}) {
+const { initDb, query, tx:baseTx } = db;
 const app = express();
 const requestIdentity = new AsyncLocalStorage();
+const tx=work=>baseTx(async client=>{
+    if(!requestIdentity.getStore())return work(client);
+    let guarded=false;
+    const guard=async()=>{
+        if(guarded)return;guarded=true;
+        await client.query('SELECT pg_advisory_xact_lock_shared($1)',[operationLock]);
+        const context=requestIdentity.getStore(),readOnly=['GET','HEAD'].includes(context.method)&&!/^\/mensalistas\/\d+\/financeiro\/?$/i.test(context.path);
+        if((await client.query('SELECT manutencao FROM operacao_estado WHERE id=1 FOR SHARE')).rows[0]?.manutencao&&!readOnly)throw new OperationError('Operação em manutenção. Aguarde a conferência e liberação do administrador.',503);
+    };
+    return work({query:async(sql,params)=>{
+        if(!guarded&&/^SET TRANSACTION ISOLATION LEVEL /i.test(sql))return client.query(sql,params);
+        await guard();return client.query(sql,params);
+    }});
+});
+const operations=createOperationalService({query,tx:baseTx,env,clock,storage:backupStorage});
 
 app.disable('etag'); // Desabilita ETag para evitar 304
+app.use((req,res,next)=>{
+    req.requestId=randomUUID();res.set('X-Request-ID',req.requestId);const started=Date.now();
+    res.once('finish',()=>{if(res.statusCode>=500)console.error('[BACK] Requisição não concluída:',{referencia:req.requestId,metodo:req.method,rota:req.path,status:res.statusCode,duracao_ms:Date.now()-started});});next();
+});
 const production = Boolean(env.VERCEL || env.NODE_ENV === 'production');
 function trustedOrigin(req, origin) {
     if (!origin) return true;
@@ -81,6 +104,8 @@ async function ensureDatabase() {
 }
 const { router: authRouter, requireAuth, allow } = createAuth({ query, tx, ready, env, setupToken });
 app.use('/auth', authRouter);
+const operationalRoutes=createOperationalRouter({service:operations,query,tx:baseTx,allow,ready,env,clock});
+app.use(operationalRoutes.publicRouter);
 
 async function logAudit(acao, detalhes = {}) {
     try {
@@ -189,7 +214,7 @@ app.use(createPlateRouter({
 
 // Leitura de dados operacionais segue a mesma proteção das alterações.
 app.use(requireAuth);
-app.use((req,_res,next) => requestIdentity.run(req.user,next));
+app.use((req,_res,next) => requestIdentity.run({...req.user,method:req.method,path:req.path},next));
 app.use((req,res,next) => {
     const path = req.path.toLowerCase().replace(/\/+$/, '');
     if (/^\/auditoria(?:\/|$)/.test(path)) return allow('supervisor','administrador')(req,res,next);
@@ -202,10 +227,11 @@ app.use((req,res,next) => {
     }
     next();
 });
+app.use(operationalRoutes.router);
 
 app.use(createCashRouter({query,tx,allow,timeZone:APP_TIMEZONE,clock}));
 app.use(createOperationsRouter({ query, tx, allow, timeZone: APP_TIMEZONE, clock }));
-app.use(createBackupRouter({ tx, allow }));
+app.use(createBackupRouter({ tx:baseTx, allow,operations }));
 app.use(createSubscriptionsRouter({query,tx,allow,clock,timeZone:APP_TIMEZONE}));
 app.use(createReportsRouter({query,tx,allow,timeZone:APP_TIMEZONE}));
 
@@ -419,10 +445,13 @@ app.put('/configuracoes',async(req,res,next)=>{
 
 app.use((err, _req, res, _next) => {
     if (res.headersSent) return;
-    const status = err instanceof OperationError ? err.status : err.status === 413 ? 413 : err.type === 'entity.parse.failed' ? 400 : err.code === '23505' ? 409 : 500;
-    const message = err instanceof OperationError ? err.message : status === 413 ? 'Arquivo maior que o limite de 10 MB' : status === 400 ? 'JSON inválido' : status === 409 ? 'Já existe um registro com estes dados' : 'Não foi possível concluir a operação';
+    const unavailable=['ETIMEDOUT','ENOTFOUND','EAI_AGAIN','ECONNREFUSED','ECONNRESET','08006','57P01','57P03','57014'].includes(err.code);
+    const concurrent=['40001','40P01'].includes(err.code);
+    const status = err instanceof OperationError ? err.status : unavailable?503:err.status === 413 ? 413 : err.type === 'entity.parse.failed' ? 400 : err.code === '23505'||concurrent ? 409 : 500;
+    const message = err instanceof OperationError ? err.message : unavailable?'Banco de dados temporariamente indisponível. Tente novamente.':concurrent?'Os dados mudaram durante a operação. Atualize e confira novamente.':status === 413 ? 'Arquivo maior que o limite de 10 MB' : status === 400 ? 'JSON inválido' : status === 409 ? 'Já existe um registro com estes dados' : 'Não foi possível concluir a operação';
+    if(status===503)res.set('Retry-After','2');
     if (status === 500) console.error('[BACK] Falha de operação:', err.code || err.name);
-    res.status(status).json({ success: false, error: message });
+    res.status(status).json({ success: false, error: message,request_id:_req.requestId });
 });
 return app;
 }

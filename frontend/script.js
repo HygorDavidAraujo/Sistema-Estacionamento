@@ -59,12 +59,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     ReceiptService.bind();
     CashService.bind();
     ReportService.bind();SubscriptionService.bind();
+    OperationService.bind();
     window.onSessionStarted = async () => {
+        await OperationService.refreshState();
         await loadConfig();
         await syncActiveEntriesFromBackend();
         await carregarDashboard();
-        await CashService.refresh();await SubscriptionService.alerts();SubscriptionService.clearForm();
+        if(!OperationService.maintenance)await CashService.refresh();await SubscriptionService.alerts();SubscriptionService.clearForm();
         updatePatioCarList();
+        OperationService.apply();
     };
     window.onSessionEnded = () => { CashService.clear(); SubscriptionService.clear();ReportService.clear(); window.mensalistaEditId = null; restoreCandidate = null; clearEntradaForm(); };
     if (await AuthService.initialize()) await window.onSessionStarted();
@@ -74,9 +77,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (refreshing || document.hidden || !AuthService.user) return;
         refreshing = true;
         try {
+            await OperationService.refreshState();
             await syncActiveEntriesFromBackend();
             updatePatioCarList();
-            await Promise.allSettled([carregarDashboard(), CashService.refresh(), SubscriptionService.alerts()]);
+            await Promise.allSettled([carregarDashboard(),OperationService.maintenance?Promise.resolve():CashService.refresh(), SubscriptionService.alerts()]);OperationService.apply();
         } finally { refreshing = false; }
     }, 10000);
 });
@@ -1249,8 +1253,8 @@ async function importarBackup(event) {
         if(file.size>10*1024*1024)throw new Error('O limite do arquivo é 10 MB.');
         const payload=JSON.parse(await file.text());
         if(payload.formato!=='estacionamento-operacional'||![1,2,3].includes(payload.versao)||!payload.tabelas)throw new Error('Selecione um backup operacional no formato atual.');
-        restoreCandidate=payload;
-        document.getElementById('restoreResumo').textContent=`Arquivo com ${Object.values(payload.tabelas).reduce((n,rows)=>n+(Array.isArray(rows)?rows.length:0),0)} registros. Confira se este é o backup desejado.`;
+        const preview=await operationRequest('/restore/validar',{backup:payload});restoreCandidate=payload;
+        document.getElementById('restoreResumo').textContent=`Arquivo validado pelo servidor: versão ${preview.dados.versao}, ${preview.dados.registros} registros. Confira se este é o backup desejado.`;
         document.getElementById('restoreForm').reset();document.getElementById('restoreMessage').textContent='';
         openPopup('restorePopup');
     }catch(error){notify(error.message,'error',6000);}
@@ -1259,9 +1263,10 @@ async function confirmarRestore(event){
     event.preventDefault();if(!restoreCandidate)return;
     const button=document.getElementById('restoreSubmit');button.disabled=true;
     try{
+        await OperationService.mode(true,document.getElementById('restoreMotivo').value);
         await operationRequest('/restore',{backup:restoreCandidate,confirmacao:document.getElementById('restoreConfirmacao').value,senha:document.getElementById('restoreSenha').value});
         restoreCandidate=null;document.getElementById('restoreForm').reset();closePopup('restorePopup');
-        await window.onSessionStarted();notify('Backup restaurado com sucesso.','success');
+        await window.onSessionStarted();notify('Dados restaurados em manutenção. Confira o pátio e os recebimentos antes de liberar no painel de operação.','success',9000);await OperationService.open();
     }catch(error){document.getElementById('restoreMessage').textContent=error.message;}
     finally{document.getElementById('restoreSenha').value='';button.disabled=false;}
 }

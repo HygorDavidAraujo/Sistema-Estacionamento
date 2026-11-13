@@ -97,7 +97,10 @@ test('caixa único, recebimentos por responsável, conferência e versões de fe
     await t.test('backup contém ajustes, conferências e versões e restaura os relacionamentos',async()=>{
         const backup=(await admin.request('/backup')).data.dados;assert.equal(backup.versao,3);
         for(const name of ['caixa_ajustes','caixa_conferencias','caixa_acoes'])assert.ok(backup.tabelas[name].length);
+        await admin.request('/operacao/manutencao','POST',{ativo:true,motivo:'Restauração de teste em banco isolado'});
         const restored=await admin.request('/restore','POST',{backup,confirmacao:'RESTAURAR',senha:'Senha-segura-123'});assert.equal(restored.status,200,JSON.stringify(restored.data));
+        await admin.request('/operacao/manutencao','POST',{ativo:false,motivo:'Conferência de teste concluída com sucesso'});
+        await b.request('/auth/login','POST',{login:'operador-b',senha:'Senha-segura-123'});
         assert.equal((await system.db.query('SELECT COUNT(*)::int AS n FROM caixa_conferencias')).rows[0].n,3);
         assert.equal((await post(b,'/caixa/turnos/abrir',{fundo_inicial:0})).status,200);
     });
@@ -108,7 +111,10 @@ test('caixa único, recebimentos por responsável, conferência e versões de fe
         for(const row of backup.tabelas.caixa_movimentos)for(const key of ['turno_id','operador_id','operador_nome'])delete row[key];
         for(const row of backup.tabelas.operacoes_financeiras)delete row.turno_id;
         backup.checksum=createHash('sha256').update(JSON.stringify(backup.tabelas)).digest('hex');
+        await admin.request('/operacao/manutencao','POST',{ativo:true,motivo:'Restauração de teste em banco isolado'});
         const restored=await admin.request('/restore','POST',{backup,confirmacao:'RESTAURAR',senha:'Senha-segura-123'});assert.equal(restored.status,200,JSON.stringify(restored.data));
+        await admin.request('/operacao/manutencao','POST',{ativo:false,motivo:'Conferência de teste concluída com sucesso'});
+        await a.request('/auth/login','POST',{login:'operador-a',senha:'Senha-segura-123'});await b.request('/auth/login','POST',{login:'operador-b',senha:'Senha-segura-123'});
         assert.equal((await system.db.query("SELECT COUNT(*)::int AS n FROM caixa_turnos WHERE estado<>'legado'")).rows[0].n,0);
         assert.equal((await system.db.query('SELECT COUNT(*)::int AS n FROM caixa_movimentos WHERE turno_id IS NOT NULL')).rows[0].n,0);
     });

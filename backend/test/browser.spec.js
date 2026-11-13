@@ -389,3 +389,36 @@ test('mensalista vencido renova pela tela de saída e preserva o período já qu
         await expect(page.locator('#comprovantePermanenciaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovantePermanencia')).toContainText('Sem cobrança');await expect(page.locator('.car-item').filter({hasText:plate})).toHaveCount(0);
     }finally{await page.evaluate(async()=>{await operationRequest('/__test/clock',{advanceMinutes:0});});}
 });
+
+test('resposta de pagamento perdida: recarregar e consultar recupera o comprovante sem duplicar',async({page})=>{
+    const plate='BCD7E89';await page.click('#btnEntrada');await page.fill('#placaEntrada',plate);await expect(page.locator('#modeloEntrada')).not.toHaveValue('');await page.click('#registrarBtn');await expect(page.locator('#comprovanteEntradaPopup')).toHaveAttribute('aria-hidden','false');await page.locator('#comprovanteEntradaPopup [data-close]').click();
+    await page.evaluate(async plate=>{await operationRequest('/__test/prepare',{placa:plate,minutes:65});},plate);
+    await page.locator('.car-item').filter({hasText:plate}).locator('.btn-saida-card').click();await expect(page.locator('#pagamentoPopup')).toHaveAttribute('aria-hidden','false');await page.selectOption('#splitPagamentoLista .split-forma','Pix');
+    let finished;const lostResponse=new Promise(resolve=>{finished=resolve;});
+    await page.route('**/saida',async route=>{await route.fetch();await route.abort('failed');finished();});await page.click('#confirmarPagamentoBtn');await lostResponse;await expect(page.locator('#pendingOperations')).toContainText('Saída');await page.unroute('**/saida');
+    await page.reload();await expect(page.locator('#connectionStatus')).toHaveText('Sincronizado');await expect(page.locator('#pendingOperations')).toBeVisible();await page.locator('[data-pending-check]').click();
+    await expect(page.locator('#comprovantePermanenciaPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#comprovantePermanencia')).toContainText('7,50');await expect(page.locator('#pendingOperations')).toBeHidden();
+    const summary=await page.evaluate(async plate=>(await(await apiFetch(`${BACKEND_BASE}/relatorios/financeiro?placa=${plate}`)).json()).resumo,plate);expect(summary.recebimentos).toBe(1);expect(Number(summary.total)).toBe(7.5);
+});
+
+test('painel de operação verifica backup, restaura com ponto de retorno e libera após conferência',async({page})=>{
+    const backup=await page.evaluate(async()=>(await(await apiFetch(`${BACKEND_BASE}/backup`)).json()).dados);
+    await page.evaluate(async()=>{await operationRequest('/entrada',{placa:'EFG8H90'});await syncActiveEntriesFromBackend();updatePatioCarList();});
+    await page.click('#btnMenu');await page.click('#btnOperacao');await expect(page.locator('#operacaoResumo')).toContainText('Banco disponível');await page.click('#operacaoBackup');await expect(page.locator('#operacaoBackups')).toContainText('concluido');
+    const downloaded=page.waitForEvent('download');await page.locator('[data-backup-download]').first().click();const file=await downloaded;const content=await readFile(await file.path(),'utf8');expect(content).toContain('AES-256-GCM');expect(content).not.toContain('scrypt:');
+    await page.locator('#operacaoPopup [data-close]').click();await page.click('#btnMenu');await page.locator('#backupFileInput').setInputFiles({name:'backup-teste.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(backup))});
+    await expect(page.locator('#restorePopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#restoreResumo')).toContainText('validado pelo servidor');await page.fill('#restoreMotivo','Recuperação de teste com conferência operacional');await page.fill('#restoreConfirmacao','RESTAURAR');await page.fill('#restoreSenha','Senha-teste-123');await page.click('#restoreSubmit');
+    await expect(page.locator('#operacaoPopup')).toHaveAttribute('aria-hidden','false');await expect(page.locator('#operationBanner')).toContainText('manutenção');await expect(page.locator('#operacaoRetornos [data-return-download]')).toHaveCount(1);await expect(page.locator('#btnEntrada')).toBeDisabled();
+    const result=await page.evaluate(async()=>{const res=await apiFetch(`${BACKEND_BASE}/entrada`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:'HIJ9K01'})});return res.status;});expect(result).toBe(503);
+    const safetyWait=page.waitForEvent('download');await page.locator('[data-return-download]').click();const safety=await safetyWait;expect(await readFile(await safety.path(),'utf8')).toContain('EFG8H90');
+    await page.fill('#operacaoMotivo','Pátio e recebimentos conferidos após recuperação');await page.click('#operacaoLiberar');await expect(page.locator('#operationBanner')).toBeHidden();await expect(page.locator('#btnEntrada')).toBeEnabled();
+    await page.locator('#operacaoPopup [data-close]').click();await page.keyboard.press('F2');await expect(page.locator('#entradaPopup')).toHaveAttribute('aria-hidden','false');
+});
+
+test('recuperação administrativa pela interface consome o código de uso único',async({page})=>{
+    await page.evaluate(async()=>{await operationRequest('/auth/users',{login:'recuperavel',nome:'Administrador recuperável',perfil:'administrador',senha:'Senha-anterior-123'});});
+    await page.click('#btnAuth');await page.click('#btnRecuperarAcesso');await page.fill('#recoveryLogin','recuperavel');await page.fill('#recoveryCodigo','preview-recovery-'.repeat(4));await page.fill('#recoverySenha','Nova-senha-recuperada-123');await page.click('#recoverySubmit');
+    await expect(page.locator('#authMessage')).toContainText('código de recuperação');
+    await page.fill('#authLogin','recuperavel');await page.fill('#authSenha','Nova-senha-recuperada-123');await page.click('#authSubmit');await expect(page.locator('#sessionIdentity')).toContainText('Administrador recuperável');
+    const status=await page.evaluate(async()=>(await(await apiFetch(`${BACKEND_BASE}/auth/status`)).json()).recuperacao_disponivel);expect(status).toBe(false);
+});

@@ -81,7 +81,9 @@ test('diária antecipada integra entrada, pagamentos, caixa, saída e backup sem
     });
     await t.test('backup e restauração preservam horário, antecipação, parcelas e comprovante original',async()=>{
         const backup=(await admin.request('/backup')).data.dados;
+        await admin.request('/operacao/manutencao','POST',{ativo:true,motivo:'Restauração de teste em banco isolado'});
         const restored=await admin.request('/restore','POST',{backup,confirmacao:'RESTAURAR',senha:'Senha-segura-123'});assert.equal(restored.status,200,JSON.stringify(restored.data));
+        await admin.request('/operacao/manutencao','POST',{ativo:false,motivo:'Conferência de teste concluída com sucesso'});
         assert.deepEqual((await admin.request(`/comprovantes/entrada/${entry}`)).data.dados,receipt);
         const row=(await system.db.query('SELECT diaria_valor_pago,diaria_retirada_em FROM historico WHERE entry_id=$1',[entry])).rows[0];assert.equal(Number(row.diaria_valor_pago),25);assert.equal(new Date(row.diaria_retirada_em).toISOString(),'2026-11-13T21:00:00.000Z');
     });

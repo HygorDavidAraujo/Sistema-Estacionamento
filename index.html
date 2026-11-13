@@ -23,10 +23,12 @@
 
 <div id="toastContainer" aria-live="polite" role="status"></div>
 <p id="sessionIdentity" class="session-identity">Entre para operar o estacionamento</p>
+<div id="operationBanner" class="operation-banner" role="status" hidden></div>
+<div id="pendingOperations" class="operation-banner" role="status" hidden></div>
 
 <div class="popup" role="dialog" aria-modal="true" id="authPopup" aria-hidden="true" aria-labelledby="authTitle">
     <div class="popup-content">
-        <h3 id="authTitle">Acesso ao estacionamento</h3>
+        <h3 id="authTitle">Acesso ao estacionamento</h3><button id="btnRecuperarAcesso" class="btn-ghost" type="button" hidden>Recuperar acesso administrativo</button>
         <form id="authForm">
             <div id="authSetupFields" hidden>
                 <label for="authNome">Seu nome</label><input id="authNome" type="text" maxlength="120" autocomplete="name" />
@@ -38,6 +40,15 @@
             <button id="authSubmit" type="submit">Entrar</button>
             <button id="authRetry" type="button" class="btn-ghost" hidden>Tentar novamente</button>
         </form>
+    </div>
+</div>
+
+<div class="popup" role="dialog" aria-modal="true" id="recoveryPopup" aria-hidden="true" aria-labelledby="recoveryTitle">
+    <div class="popup-content"><button class="close" data-close aria-label="Fechar">&times;</button><h3 id="recoveryTitle">Recuperar administrador</h3><p>Use o código de recuperação configurado na hospedagem. Ele funciona uma única vez e encerra as sessões deste administrador.</p>
+        <form id="recoveryForm"><label for="recoveryLogin">Usuário administrador</label><input id="recoveryLogin" required autocomplete="username" />
+            <label for="recoveryCodigo">Código de recuperação</label><input id="recoveryCodigo" type="password" required autocomplete="off" />
+            <label for="recoverySenha">Nova senha (12 a 128 caracteres)</label><input id="recoverySenha" type="password" required minlength="12" maxlength="128" autocomplete="new-password" /><button id="recoverySubmit" type="submit">Recuperar senha</button>
+        </form><p id="recoveryMessage" role="status"></p>
     </div>
 </div>
 
@@ -396,6 +407,7 @@
         <button class="close" data-close>&times;</button>
         <h3>Configurações</h3>
         <button id="btnUsuarios" type="button">Usuários e permissões</button>
+        <button id="btnOperacao" type="button">Operação, backup e recuperação</button>
         <label for="nomeEstacionamento">Nome nos comprovantes</label><input id="nomeEstacionamento" type="text" maxlength="120" />
         <label for="documentoEstacionamento">Documento do estacionamento</label><input id="documentoEstacionamento" type="text" maxlength="40" />
         <label for="enderecoEstacionamento">Endereço</label><input id="enderecoEstacionamento" type="text" maxlength="180" />
@@ -432,13 +444,27 @@
 <div class="popup" role="dialog" aria-modal="true" id="restorePopup" aria-hidden="true" aria-labelledby="restoreTitle">
     <div class="popup-content"><button class="close" data-close aria-label="Fechar">&times;</button><h3 id="restoreTitle">Restaurar backup operacional</h3>
         <p>Os dados operacionais serão substituídos. Usuários e senhas serão preservados.</p><p id="restoreResumo"></p>
-        <form id="restoreForm"><label for="restoreConfirmacao">Digite RESTAURAR para confirmar</label><input id="restoreConfirmacao" type="text" required autocomplete="off" />
+        <form id="restoreForm"><label for="restoreMotivo">Motivo da restauração (10 a 255 caracteres)</label><textarea id="restoreMotivo" required minlength="10" maxlength="255"></textarea><p>Os atendimentos serão suspensos e uma cópia de retorno será preservada antes da substituição. A operação continuará em manutenção até sua conferência.</p><label for="restoreConfirmacao">Digite RESTAURAR para confirmar</label><input id="restoreConfirmacao" type="text" required autocomplete="off" />
             <label for="restoreSenha">Sua senha de administrador</label><input id="restoreSenha" type="password" required autocomplete="current-password" />
             <button id="restoreSubmit" type="submit">Validar e restaurar</button></form><p id="restoreMessage" role="status"></p>
     </div>
 </div>
 
 <!-- POPUP MENSALISTAS -->
+<div class="popup" role="dialog" aria-modal="true" id="operacaoPopup" aria-hidden="true" aria-labelledby="operacaoTitle">
+    <div class="popup-content popup-content-large"><button class="close" data-close aria-label="Fechar">&times;</button><h3 id="operacaoTitle">Operação e recuperação</h3>
+        <button id="operacaoAtualizar" type="button">Atualizar diagnóstico</button><div id="operacaoResumo" role="status"></div>
+        <h4>Manutenção</h4><p>Suspende atendimentos e recebimentos. Use durante recuperação ou conferência dos dados.</p><label for="operacaoMotivo">Justificativa (10 a 255 caracteres)</label><textarea id="operacaoMotivo" minlength="10" maxlength="255" rows="2"></textarea>
+        <button id="operacaoAtivar" type="button">Suspender operação</button><button id="operacaoLiberar" type="button">Conferi os dados · liberar operação</button>
+        <h4>Backup externo</h4><p>Cópias cifradas com dados operacionais e usuários, sem sessões. A chave de cifragem deve ser guardada também fora da hospedagem.</p><button id="operacaoBackup" type="button">Gerar e verificar cópia agora</button>
+        <div id="operacaoBackups" class="cash-table-scroll"></div><h4>Pontos anteriores a restaurações</h4><p>As três cópias de retorno ficam neste banco. Baixe uma cópia para protegê-la fora do Neon.</p><div id="operacaoRetornos"></div>
+        <div id="operacaoRestaurarNuvem" hidden><h4>Restaurar cópia externa selecionada</h4><p>Os dados operacionais serão substituídos, os usuários atuais serão preservados e a manutenção ficará ativa.</p>
+            <form id="restoreCloudForm"><label for="restoreCloudMotivo">Motivo</label><textarea id="restoreCloudMotivo" required minlength="10" maxlength="255"></textarea><label for="restoreCloudConfirmacao">Digite RESTAURAR</label><input id="restoreCloudConfirmacao" required />
+                <label for="restoreCloudSenha">Sua senha de administrador</label><input id="restoreCloudSenha" type="password" required autocomplete="current-password" /><button id="restoreCloudSubmit" type="submit">Suspender e restaurar</button></form>
+        </div><p id="operacaoMessage" role="status"></p>
+    </div>
+</div>
+
 <div class="popup" role="dialog" aria-modal="true" id="mensalistasPopup" aria-hidden="true">
     <div class="popup-content popup-content-large">
         <button class="close" data-close>&times;</button>
@@ -668,6 +694,7 @@
 <script src="frontend/js/cash.service.js"></script>
 <script src="frontend/js/report.service.js"></script>
 <script src="frontend/js/subscription.service.js"></script>
+<script src="frontend/js/operation.service.js"></script>
 
 <script src="frontend/script.js"></script>
 </body>

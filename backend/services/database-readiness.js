@@ -33,5 +33,6 @@ export function initializationFailure(error) {
     if (['28P01','28000'].includes(code)) return { codigo: code, motivo: 'Credenciais do banco recusadas' };
     if (['ENOTFOUND','EAI_AGAIN','ECONNREFUSED','ECONNRESET','08006'].includes(code)) return { codigo: code, motivo: 'Falha de rede na conexão PostgreSQL' };
     if (code === '42501') return { codigo: code, motivo: 'Permissão insuficiente para preparar o banco' };
+    if(['DEPTH_ZERO_SELF_SIGNED_CERT','SELF_SIGNED_CERT_IN_CHAIN','CERT_HAS_EXPIRED','UNABLE_TO_VERIFY_LEAF_SIGNATURE','ERR_TLS_CERT_ALTNAME_INVALID'].includes(code))return {codigo:code,motivo:'Certificado TLS do banco não pôde ser verificado'};
     return { codigo: code, motivo: 'Não foi possível preparar o schema do banco' };
 }

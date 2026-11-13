@@ -15,8 +15,10 @@
     }
     async function request(url, options = {}) {
         const epoch = generation;
+        const pending=window.OperationService?.remember(url,options,user);
         const response = await fetch(url, { ...options, credentials: 'include', headers: headers(options.headers) });
         if (epoch !== generation) throw new Error('Sessão encerrada');
+        if(pending){const result=await response.clone().json().catch(()=>null);if(result?.success===true||response.status>=400&&response.status<500&&![408,429].includes(response.status))window.OperationService?.resolvePending(pending);}
         if (response.status === 401 && user) expire();
         return response;
     }
@@ -36,6 +38,7 @@
             btnMenu: ['administrador'], btnUsuarios: ['administrador'], btnMinhaSenha: Object.keys(roles),
             btnFecharCaixa: Object.keys(roles), btnTurnoCaixa: Object.keys(roles),
             btnBackupImport: ['administrador'], btnBackupExport: ['administrador']
+            ,btnOperacao:['administrador']
             ,btnRelatorioResumo:['supervisor','financeiro','administrador'],btnExportarHistorico:['supervisor','financeiro','administrador'],btnExportarMensalistas:['supervisor','financeiro','administrador'],btnVerAuditoria:['supervisor','administrador']
         };
         for (const [id, allowed] of Object.entries(permissions)) if (el(id)) el(id).hidden = !allowed.includes(role);
@@ -57,6 +60,7 @@
         window.ReceiptService?.clear();
         window.CashService?.clear();
         window.SubscriptionService?.clear();window.ReportService?.clear();
+        window.OperationService?.clear();
         if(el('comprovanteCaixa'))el('comprovanteCaixa').replaceChildren();
         window.PlateCamera?.close();
         document.querySelectorAll('.popup').forEach(popup => popup.setAttribute('aria-hidden','true'));
@@ -79,6 +83,7 @@
         el('authSubmit').textContent = setup ? 'Criar administrador' : 'Entrar';
         el('authSenha').autocomplete = setup ? 'new-password' : 'current-password';
         el('authMessage').textContent = setup ? 'Crie seu administrador com o código de primeiro acesso fornecido na implantação.' : '';
+        el('btnRecuperarAcesso').hidden=!data.recuperacao_disponivel;
     }
     async function initialize() {
         if (!bound) bind();

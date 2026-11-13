@@ -105,7 +105,7 @@ Entrada, saída e mensalidade possuem impressão em **80 mm e 58 mm**, com sele�
 
 Abertura, sangria, suprimento e fechamento do caixa também possuem comprovantes compactos nos dois formatos. O fechamento compara valores esperados e conferidos; diferenças exigem justificativa e aprovação de supervisor ou administrador. Reabrir um turno exige justificativa, preserva a conferência anterior e gera uma nova versão ao fechar. O pátio permanece ativo durante a troca de turno.
 
-O backup operacional atual usa a versão 3 e inclui contratos, veículos autorizados e cobranças, além de turnos, movimentos, ajustes e conferências. As versões 1 e 2 também podem ser restauradas: validades são preservadas e contratos básicos são preparados sem criar cobranças ou recebimentos retroativos. Turnos da versão 1 tornam-se legados, sem atribuição financeira retroativa. A restauração exige administrador, sua senha e a confirmação `RESTAURAR`, valida todas as tabelas antes de substituir registros e realinha sequências. Usuários, senhas, sessões e cotações temporárias não fazem parte do arquivo. Credenciais de acesso precisam de procedimento de recuperação separado. Arquivos antigos sem versão não são aceitos para restauração automática. Limite de requisição: 10 MB, sujeito também aos limites da hospedagem. Backup automático e contingência continuam previstos no passo 4.
+O backup operacional atual usa a versão 3 e inclui contratos, veículos autorizados e cobranças, além de turnos, movimentos, ajustes e conferências. As versões 1 e 2 também podem ser restauradas: validades são preservadas e contratos básicos são preparados sem criar cobranças ou recebimentos retroativos. Turnos da versão 1 tornam-se legados, sem atribuição financeira retroativa. A restauração exige administrador, sua senha, manutenção e a confirmação `RESTAURAR`; valida todas as tabelas, guarda um ponto de retorno, substitui registros em transação e realinha sequências. Usuários, senhas, sessões e cotações temporárias não fazem parte do arquivo operacional. Arquivos antigos sem versão não são aceitos para restauração automática. Limite de requisição: 10 MB, sujeito também aos limites da hospedagem. O passo 4 acrescenta um pacote externo cifrado com usuários, sem sessões, e ferramentas de recuperação descritas abaixo.
 
 O relatório inicial está em `ANALISE_TECNICA.md`; ele descreve o estado anterior às correções desta implementação.
 
@@ -116,6 +116,29 @@ O estacionamento é **pré-pago**: cada período de mensalidade corresponde a **
 Cliente, contrato, placas autorizadas e cobranças têm registros separados. O contrato possui preço individual, plano, situação e limite de veículos simultâneos. O cadastro não concede validade; recebimento parcial reduz o saldo, mas somente a quitação libera os novos 30 dias. Suspensão e alterações de contrato exigem supervisor/administrador e justificativa. Mensalidades vencidas na saída oferecem renovação; sem renovação, a cobrança avulsa começa após o término do período quitado. Detalhes, permissões e ativação em [PASSO_3_IMPLEMENTACAO.md](PASSO_3_IMPLEMENTACAO.md).
 
 O histórico permite filtrar por data de entrada ou saída, placa, situação, operador e categoria, com paginação. O financeiro usa a data de recebimento, agrupa os meios por operação e inclui saídas, diárias antecipadas e mensalidades uma única vez. Há exportações CSV, impressão/PDF da página financeira exibida, cobranças emitidas em aberto e auditoria por responsável, período e ação. Turnos e conferências também possuem paginação. Valores de fundo, sangria e suprimento não são receita.
+
+## Operação e recuperação — passo 4
+
+O administrador dispõe de **Configurações → Operação, backup e recuperação** para consultar diagnóstico, suspender atendimentos com justificativa, gerar/verificar/baixar cópias externas e restaurar dados com ponto de retorno. A manutenção permite consultar pátio, histórico e relatórios e bloqueia alterações operacionais; a restauração mantém essa suspensão até a conferência e liberação do administrador.
+
+As cópias externas usam AES-256-GCM e **Vercel Blob privado**, com releitura e validação antes da confirmação. O agendamento diário e a retenção precisam de armazenamento conectado, `BACKUP_ENCRYPTION_KEY` e `CRON_SECRET`; `AUTH_RECOVERY_TOKEN` permite recuperar a senha de um administrador ativo usando código de uso único. Execute `npm run setup:secrets` dentro de `backend/` para gerar os três valores no seu computador. Guarde a chave também fora da hospedagem, sem incluí-la no Git.
+
+**A proteção externa só estará ativa após configurar o Vercel, publicar e verificar a primeira cópia real.** Instruções completas em [PASSO_4_IMPLEMENTACAO.md](PASSO_4_IMPLEMENTACAO.md). A migração `005-operational-recovery.sql` é automática; não exige SQL manual no Neon. A limpeza programada remove somente itens temporários expirados, preservando histórico e recebimentos.
+
+O backup operacional v3 continua sem credenciais. O pacote cifrado de recuperação v1 inclui usuários com hashes de senha e códigos de recuperação consumidos; nunca sessões. Pela interface, a restauração conserva as senhas atuais. Para recuperar também os usuários em outra base vazia, use a ferramenta local conforme [GUIA_OPERACAO_E_RECUPERACAO.md](GUIA_OPERACAO_E_RECUPERACAO.md):
+
+```powershell
+cd backend
+npm run recovery -- verificar "C:\Backups\backup-cifrado.json"
+```
+
+O comando de verificação requer a chave no ambiente local e não conecta ao banco. O guia também descreve exportação operacional, recuperação integral e conferência antes de liberar o atendimento.
+
+A tela avisa indisponibilidade e conserva, durante a mesma sessão no navegador, referências de confirmações cujo resultado precisa ser consultado. Reenvio conserva a referência original; não há confirmação financeira offline nem reenvio automático. Logout/expiração limpa dados locais; use histórico e caixa se a sessão terminou. Atalhos: F2 entrada, F4 saída, F6 mensalistas e F8 turno.
+
+`/api/health` verifica o processo; `/api/ready` verifica também o banco. Os logs de erro e o cabeçalho `X-Request-ID` permitem correlacionar falhas. A conexão PostgreSQL verifica certificado e hostname do servidor.
+
+Validação acumulada: **86 testes de lógica/API e 20 de navegador aprovados**, com zero vulnerabilidades reportadas por `npm audit`. Banco isolado em memória e armazenamento externo simulado; a ativação em produção e o teste físico de impressão dependem da publicação e do equipamento.
 
 ## Estrutura
 

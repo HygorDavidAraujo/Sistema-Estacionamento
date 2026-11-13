@@ -2,7 +2,7 @@
 
 Data: 12/11/2026. Escopo: código local, interface, API, schema, acesso, entrada/saída, turnos, caixa, mensalistas, histórico, relatórios, backup e testes.
 
-Atualização em 13/11/2026: este documento preserva o diagnóstico anterior às correções. A implementação do primeiro passo está em `PASSO_1_IMPLEMENTACAO.md`. As referências de linhas e os scripts de reprodução abaixo correspondem à versão revisada originalmente; para validar o código atual, use os testes descritos no documento da implementação.
+Atualização em 13/11/2026: este documento preserva o diagnóstico anterior às correções. As implementações dos quatro passos estão em [PASSO_1_IMPLEMENTACAO.md](PASSO_1_IMPLEMENTACAO.md), [PASSO_2_IMPLEMENTACAO.md](PASSO_2_IMPLEMENTACAO.md), [PASSO_3_IMPLEMENTACAO.md](PASSO_3_IMPLEMENTACAO.md) e [PASSO_4_IMPLEMENTACAO.md](PASSO_4_IMPLEMENTACAO.md). As referências de linhas e os scripts de reprodução abaixo correspondem à versão revisada originalmente; para validar o código atual, use os testes e procedimentos de ativação desses documentos.
 
 ## Parecer
 

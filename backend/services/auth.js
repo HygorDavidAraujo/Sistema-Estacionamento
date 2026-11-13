@@ -75,7 +75,24 @@ export function createAuth({ query, tx, ready, env, setupToken }) {
     }
     router.get('/status', wrap(async (_req, res) => {
         const { rows } = await query('SELECT COUNT(*)::int AS total FROM usuarios');
-        res.json({ success: true, primeiro_acesso: rows[0].total === 0, configuracao_disponivel: Boolean(setupToken) });
+        const recovery=String(env.AUTH_RECOVERY_TOKEN||''),enabled=recovery.length>=32&&recovery.length<=256;
+        const used=enabled?(await query('SELECT token_hash FROM auth_recuperacoes WHERE token_hash=$1',[digest(recovery)])).rows.length:1;
+        res.json({ success: true, primeiro_acesso: rows[0].total === 0, configuracao_disponivel: Boolean(setupToken),recuperacao_disponivel:rows[0].total>0&&enabled&&!used });
+    }));
+    router.post('/recovery',rateLimit,wrap(async(req,res)=>{
+        const token=String(env.AUTH_RECOVERY_TOKEN||'');
+        if(token.length<32||token.length>256||typeof req.body.codigo!=='string'||req.body.codigo.length>256||!same(req.body.codigo,token))fail('Código de recuperação ou administrador inválido',403);
+        const hash=await hashPassword(req.body.nova_senha);
+        await tx(async client=>{
+            await client.query('SELECT pg_advisory_xact_lock($1)',[743221911]);
+            if((await client.query('SELECT token_hash FROM auth_recuperacoes WHERE token_hash=$1',[digest(token)])).rows.length)fail('Este código de recuperação já foi utilizado. Configure outro no Vercel.',409);
+            const user=(await client.query("SELECT * FROM usuarios WHERE login=$1 AND perfil='administrador' AND ativo=true FOR UPDATE",[String(req.body.login||'').trim().toLowerCase().slice(0,60)])).rows[0];
+            if(!user)fail('Código de recuperação ou administrador inválido',403);
+            await client.query('UPDATE usuarios SET senha_hash=$1,atualizado_em=NOW() WHERE id=$2',[hash,user.id]);
+            await client.query('DELETE FROM sessoes WHERE usuario_id=$1',[user.id]);
+            await client.query('INSERT INTO auth_recuperacoes (token_hash,usuario_id) VALUES ($1,$2)',[digest(token),user.id]);
+            await audit(client,user,'acesso_administrativo_recuperado',{login:user.login,token_consumido:true});
+        });cookie(res,'',true);res.json({success:true,mensagem:'Senha recuperada. Entre com a nova senha. O código de recuperação foi consumido.'});
     }));
     router.post('/setup', rateLimit, wrap(async (req, res) => {
         if (!setupToken || !same(req.body.codigo, setupToken)) fail('Código de primeiro acesso inválido', 403);

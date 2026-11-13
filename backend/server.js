@@ -2,6 +2,7 @@ import './env.js';
 import { randomBytes } from 'node:crypto';
 import * as db from './db.js';
 import { createApp } from './app.js';
+export const config = { maxDuration: 60 };
 
 const production = Boolean(process.env.VERCEL || process.env.NODE_ENV === 'production');
 const setupToken = process.env.AUTH_SETUP_TOKEN || process.env.ADMIN_TOKEN || (!production ? randomBytes(24).toString('hex') : '');
